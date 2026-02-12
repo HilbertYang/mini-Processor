@@ -13,11 +13,21 @@ my $PIPE_DMEM_ADDR_REG     = $PIPE_BASE + 0xc;
 my $PIPE_DMEM_WDATA_LO_REG = $PIPE_BASE + 0x10;
 my $PIPE_DMEM_WDATA_HI_REG = $PIPE_BASE + 0x14;
 
+
 my $PIPE_PC_DBG_REG        = $PIPE_BASE + 0x18;
 my $PIPE_IF_INSTR_REG      = $PIPE_BASE + 0x1c;
 my $PIPE_DMEM_RDATA_LO_REG = $PIPE_BASE + 0x20;
 my $PIPE_DMEM_RDATA_HI_REG = $PIPE_BASE + 0x24;
-
+#define PIPE_CTRL_REG            0x2000240
+#define PIPE_IMEM_ADDR_REG       0x2000244
+#define PIPE_IMEM_WDATA_REG      0x2000248
+#define PIPE_DMEM_ADDR_REG       0x200024c
+#define PIPE_DMEM_WDATA_LO_REG   0x2000250
+#define PIPE_DMEM_WDATA_HI_REG   0x2000254
+#define PIPE_PC_DBG_REG          0x2000258
+#define PIPE_IF_INSTR_DBG_REG    0x200025c
+#define PIPE_DMEM_RDATA_LO_REG   0x2000260
+#define PIPE_DMEM_RDATA_HI_REG   0x2000264
 sub regwrite {
   my($addr, $value) = @_;
   my $cmd = sprintf("regwrite 0x%08x 0x%08x", $addr, $value);

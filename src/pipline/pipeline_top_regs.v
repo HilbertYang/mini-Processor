@@ -7,7 +7,7 @@ module pipeline_top_regs #(
   input  wire                         clk,
   input  wire                         reset,
 
-  // --- Register bus in/out (NF2-style)
+  // --- Register bus in/out
   input  wire                         reg_req_in,
   input  wire                         reg_ack_in,
   input  wire                         reg_rd_wr_L_in,
@@ -129,8 +129,8 @@ module pipeline_top_regs #(
   // ---------------------------
   generic_regs #(
     .UDP_REG_SRC_WIDTH (UDP_REG_SRC_WIDTH),
-    .TAG               (`PIPE_BLOCK_ADDR),      // <- 你自己定义/换成工程宏
-    .REG_ADDR_WIDTH    (`PIPE_REG_ADDR_WIDTH),  // <- block 内地址宽度
+    .TAG               (`PIPE_BLOCK_ADDR),     
+    .REG_ADDR_WIDTH    (`PIPE_REG_ADDR_WIDTH),
     .NUM_COUNTERS      (0),
     .NUM_SOFTWARE_REGS (7),
     .NUM_HARDWARE_REGS (4)

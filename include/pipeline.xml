@@ -57,6 +57,13 @@
       <nf:description>D-mem Port-B write data high 32 bits</nf:description>
       <nf:type>generic_software32</nf:type>
     </nf:register>
+
+    <nf:register>
+      <nf:name>reserved</nf:name>
+      <nf:description>Reserved for future use</nf:description>
+      <nf:type>generic_software32</nf:type>
+    </nf:register>
+    
     <!-- hardware regs (RO) -->
     <nf:register>
       <nf:name>pc_dbg</nf:name>

@@ -4,30 +4,31 @@ module pipeline (
   input  wire        reset,
 
   input  wire        run,           
-  input  wire        step,          
-  input  wire        pc_reset_pulse, // Reset PC to 0
+  input  wire        step,           // run 1step
+  input  wire        pc_reset_pulse, // Reset PC to 0 sofrware rset
 
   //I-mem programming interface (from reg stage)
   input  wire        imem_prog_we,
-  input  wire [8:0]  imem_prog_addr,
+  input  wire [8:0]  imem_prog_addr,    // 9-bit address for 512x32 I-mem
   input  wire [31:0] imem_prog_wdata,
 
   //NEW: D-mem programming interface (from reg stage, use Port B)
   input  wire        dmem_prog_en,
   input  wire        dmem_prog_we,
-  input  wire [7:0]  dmem_prog_addr,
+  input  wire [7:0]  dmem_prog_addr,   // 8-bit address for 256x64 D-mem
   input  wire [63:0] dmem_prog_wdata,
   output wire [63:0] dmem_prog_rdata,
 
-  output wire [8:0]  pc_dbg,
-  output wire [31:0] if_instr_dbg
-);
 
+  output wire [8:0]  pc_dbg,           // output for debug
+  output wire [31:0] if_instr_dbg      // output for debug
+);
+  
 // ---------
 // control signals  step control signals
 // ---------
 
-  reg step_d;
+  reg step_d;                            //IF
   
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
@@ -40,18 +41,40 @@ module pipeline (
   wire step_pulse = step & ~step_d;       // edge detect
   wire advance    = run | step_pulse; 
 
+
+  //instr: step 1 step 0 step 1
+  
+  
+   // WB signals (directly from MEM/WB, gated by advance)
+  wire         memwb_wreg_en;
+  wire  [1:0]  memwb_wreg;
+  reg [63:0] memwb_load_data;
+
+  wire        wb_wen;
+  wire [1:0]  wb_waddr;
+  wire [63:0] wb_wdata;
+  
+  
+
 // ---------
 // IF: PC and I-mem
 // ---------
 
   reg  [8:0] pc;
+  wire  [8:0] pc_in;
+  reg   [8:0] pc_next;
   assign pc_dbg = pc;
 
   // I-mem instance with programming interface
-  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc;
+  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc_in;
   wire [31:0] imem_din_mux  = imem_prog_wdata;
   wire        imem_we_mux   = imem_prog_we;
   wire [31:0] imem_dout;
+
+// write only for programming?
+
+
+
 
   I_M_32bit_512depth u_imem (
     .addr(imem_addr_mux),
@@ -61,6 +84,8 @@ module pipeline (
     .en  (1'b1),
     .we  (imem_we_mux)
   );
+
+// hard to clear: we redownload the bitfile to reset or use fixed instrutions
 
   // // I-mem instance
   // wire [8:0]  imem_addr;
@@ -79,12 +104,19 @@ module pipeline (
   always @(posedge clk) begin
     if (reset) begin
       pc <= 9'd0;
+      pc_next <= 9'd1;
     end else if (pc_reset_pulse) begin
       pc <= 9'd0;
+      pc_next <= 9'd1;
     end else if (advance) begin
-      pc <= pc + 9'd1;
-    end
+      pc <= pc + 9'd1; 
+      pc_next <= pc_next + 9'd1;      
+    end 
+
   end
+
+  assign pc_in = advance ? pc_next : pc; // Mux for PC update, if advance then use pc_next, else hold the current pc
+
 
   // // feed PC to I-mem address,this is sequential logic
   // always @(posedge clk) begin
@@ -97,51 +129,67 @@ module pipeline (
   //   end
   // end
 
-  // IF -> ID
-  reg  [31:0] ifid_instr;
-  assign if_instr_dbg = ifid_instr;//output for debug
 
-  always @(posedge clk) begin
-    if (reset) begin
-      ifid_instr <= 32'h0;
-    end else if (pc_reset_pulse) begin
-      ifid_instr <= 32'h0;
-    end else if (advance) begin
-      ifid_instr <= imem_dout;
-    end
-  end
+  // // IF -> ID
+  // reg  [31:0] ifid_instr;
+  // assign if_instr_dbg = ifid_instr;//output for debug
+
+  // always @(posedge clk) begin
+  //   if (reset) begin
+  //     ifid_instr <= 32'h0;
+  //   end else if (pc_reset_pulse) begin
+  //     ifid_instr <= 32'h0;
+  //   end else if (advance) begin
+  //     ifid_instr <= imem_dout;
+  //   end
+  // end
 
   // ------------------
   // ID: decode AND regfile read
   // INSTRUCTION FORMAT (32 bits):
   // [31] WMemEn, [30] WRegEn, [29:27] Reg1, [26:24] Reg2, [23:21] WReg1, rest unused
   // ------------------ 
-  wire        id_wmem_en = ifid_instr[31];
-  wire        id_wreg_en = ifid_instr[30];
-  wire [1:0]  id_reg1    = ifid_instr[28:27]; // low 2 bits of [29:27]
-  wire [1:0]  id_reg2    = ifid_instr[25:24]; // low 2 bits of [26:24]
-  wire [1:0]  id_wreg    = ifid_instr[22:21]; // low 2 bits of [23:21]
+  wire [31:0] ids_rf = advance ? imem_dout : 32'h0; // only send instr to ID stage when advance, otherwise send NOP (0)
+  reg        id_wmem_en ;
+  reg         id_wreg_en ;
+  wire [1:0]  id_reg1    = ids_rf[28:27]; // low 2 bits of [29:27]
+  wire [1:0]  id_reg2    = ids_rf[25:24]; // low 2 bits of [26:24]
+  reg [1:0]  id_wreg    ; // low 2 bits of [23:21]
   wire [63:0] rf_r0data;
   wire [63:0] rf_r1data;
+  reg       wb_ff;
 
-  // WB signals, defined as wire later, assigned from MEM/WB pipeline register
-  // reg        wb_wen;
-  // reg [1:0]  wb_waddr;
-  // reg [63:0] wb_wdata;
+  always @(posedge clk) begin
+    if (reset) begin
+      id_wmem_en <= 1'd0;
+      id_wreg_en <= 1'd0;
+    end else if (pc_reset_pulse) begin
+      id_wmem_en <= 1'd0;
+      id_wreg_en <= 1'd0;
+    end else if (advance) begin
+      id_wmem_en <= ids_rf[31];     
+      id_wreg_en <= ids_rf[30];
+      id_wreg    <= ids_rf[22:21];
+    end 
+
+  end
+
   
-  // WB signals (directly from MEM/WB, gated by advance)
-  reg        memwb_wreg_en;
-  reg [1:0]  memwb_wreg;
-  reg [63:0] memwb_load_data;
-
-  wire        wb_wen;
-  wire [1:0]  wb_waddr;
-  wire [63:0] wb_wdata;
-
   // assign wb_wen   = advance & memwb_wreg_en;
-  assign wb_wen = (~reset) & (~pc_reset_pulse) & advance & memwb_wreg_en;
+  assign wb_wen = (~reset) & (~pc_reset_pulse) & advance & memwb_wreg_en; // only write when not reset, not pc reset, and advance, and memwb_wreg_en is set
   assign wb_waddr = memwb_wreg;
-  assign wb_wdata = memwb_load_data;
+  assign wb_wdata = dmem_douta;
+  // always @(posedge clk) begin
+  //   if (reset) begin
+  //     memwb_wreg_en <= 1'd0;
+  //   end else if (pc_reset_pulse) begin
+  //     memwb_wreg_en <= 1'd0;
+  //   end else if (advance) begin
+  //     wb_ff <= memwb_wreg_en;       
+  //   end 
+
+  // end
+
 
   register_file u_rf (
     .clk   (clk),
@@ -192,31 +240,31 @@ module pipeline (
   wire [63:0] ex_store_data = idex_r2out;
 
   // EX->MEM pipeline registers
-  reg        exmem_wmem_en;
+  wire         exmem_wmem_en = idex_wmem_en;
   reg        exmem_wreg_en;
   reg [1:0]  exmem_wreg;
-  reg [7:0]  exmem_addr;
-  reg [63:0] exmem_store_data;
+  wire  [7:0]  exmem_addr = ex_dmem_addr;
+  wire [63:0] exmem_store_data = ex_store_data;
 
   always @(posedge clk) begin
     if (reset) begin
-      exmem_wmem_en     <= 1'b0;
+      // exmem_wmem_en     <= 1'b0;
       exmem_wreg_en     <= 1'b0;
       exmem_wreg        <= 2'b00;
-      exmem_addr        <= 8'h00;
-      exmem_store_data  <= 64'h0;
+      // exmem_addr        <= 8'h00;
+      // exmem_store_data  <= 64'h0;
     end else if (pc_reset_pulse) begin
-      exmem_wmem_en     <= 1'b0;
+      // exmem_wmem_en     <= 1'b0;
       exmem_wreg_en     <= 1'b0;
       exmem_wreg        <= 2'b00;
-      exmem_addr        <= 8'h00;
-      exmem_store_data  <= 64'h0;
+      // exmem_addr        <= 8'h00;
+      // exmem_store_data  <= 64'h0;
     end else if (advance) begin
-      exmem_wmem_en     <= idex_wmem_en;
+      // exmem_wmem_en     <= idex_wmem_en;
       exmem_wreg_en     <= idex_wreg_en;
       exmem_wreg        <= idex_wreg;
-      exmem_addr        <= ex_dmem_addr;
-      exmem_store_data  <= ex_store_data;
+      // exmem_addr        <= ex_dmem_addr;
+      // exmem_store_data  <= ex_store_data;
     end
   end
 
@@ -272,22 +320,31 @@ module pipeline (
   // reg [1:0]  memwb_wreg;
   // reg [63:0] memwb_load_data;
 
+  // WB signals, defined as wire later, assigned from MEM/WB pipeline register
+ 
+  
+ 
+
+assign memwb_wreg_en = exmem_wreg_en;
+assign memwb_wreg    = exmem_wreg;
+
   always @(posedge clk) begin
     if (reset) begin
-      memwb_wreg_en   <= 1'b0;
-      memwb_wreg      <= 2'b00;
+      // memwb_wreg_en   <= 1'b0;
+      // memwb_wreg      <= 2'b00;
       memwb_load_data <= 64'h0;
     end else if (pc_reset_pulse) begin
-      memwb_wreg_en   <= 1'b0;
-      memwb_wreg      <= 2'b00;
+      // memwb_wreg_en   <= 1'b0;
+      // memwb_wreg      <= 2'b00;
       memwb_load_data <= 64'h0;
     end else if (advance) begin
-      memwb_wreg_en   <= exmem_wreg_en;
-      memwb_wreg      <= exmem_wreg;
-      memwb_load_data <= dmem_douta; 
+      // memwb_wreg_en   <= exmem_wreg_en;
+      // memwb_wreg      <= exmem_wreg;
+      // memwb_load_data <= dmem_douta; 
     end
   end
 
+  
   // ---------------------------
   // WB: writeback to regfile
   // We write when memwb_wreg_en=1.
@@ -311,5 +368,7 @@ module pipeline (
   //     wb_wen <= 1'b0;
   //   end
   // end
+
+
 
 endmodule
