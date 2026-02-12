@@ -1,10 +1,6 @@
+// Code your testbench here
+// or browse Examples
 
-class genData;
-  randc bit [31:0] A, B;
-  rand bit [3:0] aluctrl;
-  constraint aluIN {aluctrl < 8; aluctrl > 0;}
-  
-endclass
 module ALU_TEST ();
   localparam ALU_ADD 	= 4'b0001;
   localparam ALU_SUB 	= 4'b0010;
@@ -14,8 +10,17 @@ module ALU_TEST ();
   localparam ALU_SHIFTL = 4'b0110;
   localparam ALU_SHIFTR = 4'b0111;
   
-  function automatic logic [32:0] aluOUT (input logic [31:0] A_in, input logic [31:0] B_in, input logic [3:0] ctrl);
-    logic ovf;
+  localparam data_width = 32;
+
+  
+  class genData;
+    randc bit [data_width-1:0] A, B;
+  	rand bit [3:0] aluctrl;
+  	constraint aluIN {aluctrl < 8; aluctrl > 0;}
+  endclass
+  
+function automatic logic [32:0] aluOUT (input logic [31:0] A_in, input logic [31:0] B_in, input logic [3:0] ctrl);
+    logic        ovf;
     logic [31:0] Z_ref;
     begin
       ovf = 1'b0;
@@ -33,15 +38,16 @@ module ALU_TEST ();
     end
   endfunction
   
+  
   genData aluD = new();
-  localparam data_width = 32;
   logic [data_width-1:0] A, B, Z;
   logic [3:0] aluctrl;
   logic clk, overflow;
   logic [32:0] dut_out, ref_out, ref_out_prev;
   assign dut_out = {overflow, Z};
-  ALU ALU_DUT(A, B, aluctrl, clk, Z, overflow);
+  ALU #(.data_width(data_width)) ALU_DUT(A, B, aluctrl, clk, Z, overflow);
 
+  //aluD = new ();
   initial begin
     clk = 0;
     forever #5 clk = ~clk;
@@ -57,7 +63,8 @@ module ALU_TEST ();
       ref_out = aluOUT(A, B, aluctrl);
       
       if (dut_out !== ref_out_prev) begin
-        $display("Mismatch at iter %0d: ctrl=%0d A=%0h B=%0h | DUT={ovf=%0b, Z=%0h} REF={ovf=%0b, Z=%0h} time = %t", i, aluctrl, A, B, dut_out[32], dut_out[31:0], ref_out[32], ref_out[31:0], $time);
+        $display("Mismatch at iter %0d: ctrl=%0d A=%0h B=%0h | DUT={ovf=%0b, Z=%0h} REF={ovf=%0b, Z=%0h} time = %t",
+                 i, aluctrl, A, B, dut_out[32], dut_out[31:0], ref_out[32], ref_out[31:0], $time);
       end
       else begin
         $display("OK iter %0d ctrl=%0d Z=%08h ovf=%0b, time = %t", i, aluctrl, Z, overflow, $time);
