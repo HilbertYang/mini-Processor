@@ -1,6 +1,6 @@
 // Code your design here
 
-module REG_FILE #(parameter data_width = 32, parameter addr_width = 5) (
+module REG_FILE #(parameter data_width = 32, parameter addr_width = 2) (
   input clk, wena,
   input [addr_width-1:0] r0addr, r1addr, waddr,
   input [data_width-1:0] wdata,
