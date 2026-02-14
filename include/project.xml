@@ -35,7 +35,6 @@
     </nf:group>
     <nf:group name="udp">
       <nf:instance name="in_arb" />
-      <!-- ADD: pipeline register block instance (placed before ids) -->
       <nf:instance name="pipeline" />
       <nf:instance name="ids" />
       <nf:instance name="router_op_lut" />

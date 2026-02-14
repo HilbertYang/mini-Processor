@@ -270,7 +270,7 @@ module pipeline (
     .dina (exmem_store_data),
     .douta(dmem_douta),
 
-    // Port B: programming / verify
+    // Port B: programming
     .addrb(dmem_prog_addr),
     .clkb (clk),
     .enb  (dmem_prog_en),

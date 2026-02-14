@@ -1,11 +1,6 @@
-#!/usr/bin/perl -w
 use strict;
-
-# ====== TODO: set this after reg gen ======
-# Example: if ctrl reg is at 0x2000400 then base = 0x2000400
 my $PIPE_BASE = 0x2000240;
-
-# Offsets (word addressed, +4 each)
+#SW regs
 my $PIPE_CTRL_REG          = $PIPE_BASE + 0x0;
 my $PIPE_IMEM_ADDR_REG     = $PIPE_BASE + 0x4;
 my $PIPE_IMEM_WDATA_REG    = $PIPE_BASE + 0x8;
@@ -13,8 +8,7 @@ my $PIPE_DMEM_ADDR_REG     = $PIPE_BASE + 0xc;
 my $PIPE_DMEM_WDATA_LO_REG = $PIPE_BASE + 0x10;
 my $PIPE_DMEM_WDATA_HI_REG = $PIPE_BASE + 0x14;
 my $PIPE_RESERVED_REG       = $PIPE_BASE + 0x18;
-
-
+#HW dbg regs
 my $PIPE_PC_DBG_REG        = $PIPE_BASE + 0x1c;
 my $PIPE_IF_INSTR_REG      = $PIPE_BASE + 0x20;
 my $PIPE_DMEM_RDATA_LO_REG = $PIPE_BASE + 0x24;
@@ -30,6 +24,7 @@ my $PIPE_DMEM_RDATA_HI_REG = $PIPE_BASE + 0x28;
 #define PIPE_IF_INSTR_DBG_REG    0x2000260
 #define PIPE_DMEM_RDATA_LO_REG   0x2000264
 #define PIPE_DMEM_RDATA_HI_REG   0x2000268
+
 sub regwrite {
   my($addr, $value) = @_;
   my $cmd = sprintf("regwrite 0x%08x 0x%08x", $addr, $value);
@@ -50,11 +45,11 @@ sub regread {
 sub usage {
   print "Usage: pipereg <cmd> [args]\n";
   print "  Commands:\n";
-  print "    run <0|1>                 set run_level\n";
-  print "    step                      single step (pulse)\n";
-  print "    pcreset                   pc_reset_pulse (pulse)\n";
-  print "    imem_write <addr> <wdata> program I-mem word (addr dec/hex, wdata hex)\n";
-  print "    dmem_write <addr> <hi> <lo>  program D-mem 64b (addr dec/hex, hi/lo hex)\n";
+  print "    run <0|1>                 set run\n";
+  print "    step                      single step\n";
+  print "    pcreset                   pc_reset_pulse\n";
+  print "    imem_write <addr> <wdata> program I-mem word\n";
+  print "    dmem_write <addr> <hi> <lo>  program D-mem 64b\n";
   print "    dmem_read <addr>          read D-mem 64b via portB\n";
   print "    dbg                        print pc + if_instr\n";
   print "    allregs                    dump all hw regs\n";

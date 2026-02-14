@@ -7,23 +7,19 @@
   <nf:prefix>pipe</nf:prefix>
   <nf:location>udp</nf:location>
   <nf:description>Registers for Pipeline control + IMEM/DMEM programming</nf:description>
-
-  <!-- keep 64 like ids; plenty of space -->
   <nf:blocksize>64</nf:blocksize>
-
   <nf:registers>
-    <!-- software regs (RW) -->
-    
+    <!-- software regs -->
     <nf:register>
       <nf:name>ctrl</nf:name>
       <nf:description>
         Control bits:
-        bit0 run_level,
-        bit1 step_req (0->1 pulse),
-        bit2 pc_reset_req (0->1 pulse),
-        bit3 imem_we_req (0->1 pulse),
-        bit4 dmem_en_level,
-        bit5 dmem_we_level
+        ctrl[0] run_level,
+        ctrl[1] step_req (0->1 pulse),
+        ctrl[2] pc_reset_req (0->1 pulse),
+        ctrl[3] imem_we_req (0->1 pulse),
+        ctrl[4] dmem_en_level,
+        ctrl[5] dmem_we_level
       </nf:description>
       <nf:type>generic_software32</nf:type>
     </nf:register>
@@ -64,7 +60,7 @@
       <nf:type>generic_software32</nf:type>
     </nf:register>
     
-    <!-- hardware regs (RO) -->
+    <!-- hardware regs -->
     <nf:register>
       <nf:name>pc_dbg</nf:name>
       <nf:description>PC debug (lower 9 bits valid)</nf:description>
