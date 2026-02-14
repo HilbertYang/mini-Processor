@@ -18,7 +18,7 @@
 //   NUM_COUNTERS      -- number of counters needed (per instance)
 //   NUM_SOFTWARE_REGS -- number of registers that are written by software and
 //                        read by hardware (per instance)
-//   NUM_HARDWARE_REGS -- number of registers written by hardware and read by 
+//   NUM_HARDWARE_REGS -- number of registers written by hardware and read by
 //                        software (per instance)
 //   NUM_INSTANCES -- how many instances of the counters shall we emulate
 //   RESET_ON_READ -- reset counters when read if set to 1.
@@ -29,30 +29,30 @@
 //                          inputs
 //   REG_START_ADDR -- specify where to start addresses (see below)
 //   ACK_UNFOUND_ADDRESSES -- if an address is not found then return DEADBEEF
-//   REVERSE_WORD_ORDER -- By default, registers are input and output in order 
+//   REVERSE_WORD_ORDER -- By default, registers are input and output in order
 //                         from right to left: {n, n-1, ..., 0}. This reverses
 //                         the order to {0, 1, ..., n}.
 //
 // This is implemented as three modules connected in series, the first module
-// implements the counters, the second implements the sw regs, and the third 
+// implements the counters, the second implements the sw regs, and the third
 // implements the hw regs.
-// 
+//
 // The addresses are sequential similar to the way the modules are attached.
-// For example, if there are 4 counter, 2 sw regs and 4 hw regs then the 
-// counters will have addresses 0-3, the sw regs will have addresses 4-5, and 
-// the hw regs will have addresses 6-9. 
+// For example, if there are 4 counter, 2 sw regs and 4 hw regs then the
+// counters will have addresses 0-3, the sw regs will have addresses 4-5, and
+// the hw regs will have addresses 6-9.
 //
 // If REG_START_ADDR is non-zero, it is added to the addresses. So in the previous
 // example, if REG_START_ADDR is 5, then the counters will have addresses 5-8,
-// the sw regs will have addresses 9-10, and the hw regs will have addresses 11-14. 
+// the sw regs will have addresses 9-10, and the hw regs will have addresses 11-14.
 // This allows connecting other register modules before this generic_regs module.
 //
 // If ACK_UNFOUND_ADDRESSES is set to 1 (default), then if an address does
 // not match in any of the registers that are in this group and the tag
-// indicates a hit, then the request is ack'ed and if it's a read, 
+// indicates a hit, then the request is ack'ed and if it's a read,
 // then 32'hDEADBEEF is returned. Otherwise, nothing is done, and the request
 // is unchanged. This allows connecting other register modules after this module.
-// 
+//
 // NOTE: The various register inputs/outputs (SW/HW/Counters) will always be
 // at least one bit wide. This is because you can't conditionally define
 // ports, at least not without using `defines.
@@ -68,8 +68,8 @@
 //   INSTANCE.
 //   Specify REG_ADDR_WIDTH as the MODULE block address width, not the
 //   instance block address width.
-//   
-//   In the case of multiple instances the block will span 
+//
+//   In the case of multiple instances the block will span
 //     pow2ceil(NUM_REGS_USED) * pow2ceil(NUM_INSTANCES)
 //   where pow2ceil is defined as the nearest power of 2 above the specified
 //   value. In this case the address space is broken down as follows:
@@ -90,13 +90,8 @@
 ///////////////////////////////////////////////////////////////////////////////
 `timescale 1ns/1ps
 
-`define UDP_REG_ADDR_WIDTH 16
-`define CPCI_NF2_DATA_WIDTH 16
-`define IDS_BLOCK_TAG 1
-`define IDS_REG_ADDR_WIDTH 16
-
 module generic_regs
-   #( 
+   #(
       parameter UDP_REG_SRC_WIDTH     = 2,                       // identifies which module started this request
       parameter TAG                   = 0,                       // Tag to match against
       parameter REG_ADDR_WIDTH        = 5,                       // Width of block addresses
@@ -109,23 +104,23 @@ module generic_regs
       parameter COUNTER_WIDTH         = `CPCI_NF2_DATA_WIDTH,    // How wide should counters be?
       parameter RESET_ON_READ         = 0,                       // Resets the counters when they are read
       parameter REG_START_ADDR        = 0,                       // Address of the first counter
-      parameter ACK_UNFOUND_ADDRESSES = 1,                       // If 1, then send an ack for req that have 
+      parameter ACK_UNFOUND_ADDRESSES = 1,                       // If 1, then send an ack for req that have
                                                                  // this block's tag but not the rigt address
       parameter REVERSE_WORD_ORDER    = 0,                       // Reverse order of registers in and out
 
       // Don't modify the parameters below. They are used to calculate the
       // widths of the various register inputs/outputs.
-      parameter INSTANCES = 
+      parameter INSTANCES =
          NUM_INSTANCES > 1 ? 2 ** log2(NUM_INSTANCES) : 1,
-      parameter INST_WIDTH = 
-         NUM_INSTANCES > 1 ? log2(NUM_INSTANCES) : 0,           
-      parameter COUNTER_UPDATE_WIDTH = 
+      parameter INST_WIDTH =
+         NUM_INSTANCES > 1 ? log2(NUM_INSTANCES) : 0,
+      parameter COUNTER_UPDATE_WIDTH =
          NUM_COUNTERS > 0 ? NUM_COUNTERS * COUNTER_INPUT_WIDTH * INSTANCES : INSTANCES,
-      parameter COUNTER_DECREMENT_WIDTH = 
+      parameter COUNTER_DECREMENT_WIDTH =
          NUM_COUNTERS > 0 ? NUM_COUNTERS * INSTANCES : INSTANCES,
-      parameter SOFTWARE_REGS_WIDTH = 
+      parameter SOFTWARE_REGS_WIDTH =
          NUM_SOFTWARE_REGS > 0 ? NUM_SOFTWARE_REGS * `CPCI_NF2_DATA_WIDTH * INSTANCES : INSTANCES,
-      parameter HARDWARE_REGS_WIDTH = 
+      parameter HARDWARE_REGS_WIDTH =
          NUM_HARDWARE_REGS > 0 ? NUM_HARDWARE_REGS * `CPCI_NF2_DATA_WIDTH * INSTANCES : INSTANCES
    )
    (
@@ -156,7 +151,7 @@ module generic_regs
       input                                clk,
       input                                reset
     );
-   
+
    `LOG2_FUNC
 
    //------------------ Internal Parameters ---------------------
@@ -168,7 +163,7 @@ module generic_regs
    wire [`UDP_REG_ADDR_WIDTH-1:0]         cntr_reg_addr_out;
    wire [`CPCI_NF2_DATA_WIDTH-1:0]        cntr_reg_data_out;
    wire [UDP_REG_SRC_WIDTH-1:0]           cntr_reg_src_out;
-   
+
    wire                                   sw_reg_req_out;
    wire                                   sw_reg_ack_out;
    wire                                   sw_reg_rd_wr_L_out;
@@ -190,15 +185,15 @@ module generic_regs
    wire [COUNTER_DECREMENT_WIDTH - 1:0]   counter_decrement_ordered;
    wire [SOFTWARE_REGS_WIDTH - 1 : 0]     software_regs_ordered;
    wire [HARDWARE_REGS_WIDTH - 1 : 0]     hardware_regs_ordered;
-   
+
    wire [COUNTER_UPDATE_WIDTH - 1 :0]     counter_updates_expanded;
    wire [COUNTER_DECREMENT_WIDTH - 1:0]   counter_decrement_expanded;
    wire [SOFTWARE_REGS_WIDTH - 1 : 0]     software_regs_expanded;
    wire [HARDWARE_REGS_WIDTH - 1 : 0]     hardware_regs_expanded;
-   
+
    //------------------------ Modules ---------------------------
 
-generate 
+generate
 if (NUM_COUNTERS > 0) begin
    generic_cntr_regs
      #(.UDP_REG_SRC_WIDTH     (UDP_REG_SRC_WIDTH),
@@ -218,18 +213,18 @@ if (NUM_COUNTERS > 0) begin
       .reg_addr_in       (reg_addr_in_swapped),
       .reg_data_in       (reg_data_in),
       .reg_src_in        (reg_src_in),
-                         
+
       .reg_req_out       (cntr_reg_req_out),
       .reg_ack_out       (cntr_reg_ack_out),
       .reg_rd_wr_L_out   (cntr_reg_rd_wr_L_out),
       .reg_addr_out      (cntr_reg_addr_out),
       .reg_data_out      (cntr_reg_data_out),
       .reg_src_out       (cntr_reg_src_out),
-                         
+
       // --- update interface
       .updates           (counter_updates_expanded),
       .decrement         (counter_decrement_expanded),
-                         
+
       .clk               (clk),
       .reset             (reset));
 end
@@ -243,7 +238,7 @@ else begin
 end
 endgenerate
 
-generate 
+generate
 if (NUM_SOFTWARE_REGS > 0) begin
    generic_sw_regs
      #(.UDP_REG_SRC_WIDTH   (UDP_REG_SRC_WIDTH),
@@ -259,16 +254,16 @@ if (NUM_SOFTWARE_REGS > 0) begin
       .reg_addr_in       (cntr_reg_addr_out),
       .reg_data_in       (cntr_reg_data_out),
       .reg_src_in        (cntr_reg_src_out),
-                         
+
       .reg_req_out       (sw_reg_req_out),
       .reg_ack_out       (sw_reg_ack_out),
       .reg_rd_wr_L_out   (sw_reg_rd_wr_L_out),
       .reg_addr_out      (sw_reg_addr_out),
       .reg_data_out      (sw_reg_data_out),
       .reg_src_out       (sw_reg_src_out),
-                         
+
       .software_regs     (software_regs_expanded),
-                         
+
       .clk               (clk),
       .reset             (reset));
 end
@@ -284,7 +279,7 @@ else begin
 end
 endgenerate
 
-generate 
+generate
 if (NUM_HARDWARE_REGS > 0) begin
    generic_hw_regs
      #(.UDP_REG_SRC_WIDTH   (UDP_REG_SRC_WIDTH),
@@ -300,16 +295,16 @@ if (NUM_HARDWARE_REGS > 0) begin
       .reg_addr_in       (sw_reg_addr_out),
       .reg_data_in       (sw_reg_data_out),
       .reg_src_in        (sw_reg_src_out),
-                         
+
       .reg_req_out       (hw_reg_req_out),
       .reg_ack_out       (hw_reg_ack_out),
       .reg_rd_wr_L_out   (hw_reg_rd_wr_L_out),
       .reg_addr_out      (hw_reg_addr_out_swapped),
       .reg_data_out      (hw_reg_data_out),
       .reg_src_out       (hw_reg_src_out),
-                         
+
       .hardware_regs     (hardware_regs_expanded),
-                         
+
       .clk               (clk),
       .reset             (reset));
 end
@@ -336,11 +331,10 @@ endgenerate
          reg_src_out        <= 0;
       end
       else begin
-         if (ACK_UNFOUND_ADDRESSES 
-             && hw_reg_req_out 
+         if (ACK_UNFOUND_ADDRESSES
+             && hw_reg_req_out
              && !hw_reg_ack_out
-//             && hw_reg_addr_out[`UDP_REG_ADDR_WIDTH - 1:REG_ADDR_WIDTH]==TAG) begin
-				) begin
+             && hw_reg_addr_out[`UDP_REG_ADDR_WIDTH - 1:REG_ADDR_WIDTH]==TAG) begin
             reg_ack_out        <= 1'b1;
             reg_data_out       <= hw_reg_rd_wr_L_out ? 32'hDEADBEEF : hw_reg_data_out;
          end
@@ -369,7 +363,7 @@ endgenerate
          assign counter_updates_ordered = counter_updates;
          assign counter_decrement_ordered = counter_decrement;
       end // else: !if(NUM_COUNTERS>1 && REVERSE_WORD_ORDER)
-                   
+
       if(NUM_SOFTWARE_REGS>1 && REVERSE_WORD_ORDER) begin
          for(i=0; i<NUM_SOFTWARE_REGS; i=i+1) begin:gen_ordered_sw_regs
             assign software_regs[(i+1)*`CPCI_NF2_DATA_WIDTH - 1: i*`CPCI_NF2_DATA_WIDTH]
@@ -379,7 +373,7 @@ endgenerate
       else begin
          assign software_regs = software_regs_ordered;
       end // else: !if(NUM_SOFTWARE_REGS>1 && REVERSE_WORD_ORDER)
-      
+
       if(NUM_HARDWARE_REGS>1 && REVERSE_WORD_ORDER) begin
          for(i=0; i<NUM_HARDWARE_REGS; i=i+1) begin:gen_ordered_hw_regs
             assign hardware_regs_ordered[(i+1)*`CPCI_NF2_DATA_WIDTH - 1: i*`CPCI_NF2_DATA_WIDTH]
@@ -406,16 +400,16 @@ endgenerate
       if(INSTANCES != 1 && INSTANCES != NUM_INSTANCES) begin
          if (NUM_COUNTERS>0) begin
             for(j=0; j<NUM_COUNTERS; j=j+1) begin:gen_expanded_cntrs
-               assign counter_updates_expanded[j*COUNTER_INPUT_WIDTH*INSTANCES + 
-                                               NUM_INSTANCES*COUNTER_INPUT_WIDTH - 1 : 
-                                               j*COUNTER_INPUT_WIDTH*INSTANCES] = 
-                      counter_updates_ordered[(j+1)*COUNTER_INPUT_WIDTH*NUM_INSTANCES + 
+               assign counter_updates_expanded[j*COUNTER_INPUT_WIDTH*INSTANCES +
+                                               NUM_INSTANCES*COUNTER_INPUT_WIDTH - 1 :
+                                               j*COUNTER_INPUT_WIDTH*INSTANCES] =
+                      counter_updates_ordered[(j+1)*COUNTER_INPUT_WIDTH*NUM_INSTANCES +
                                                j*COUNTER_INPUT_WIDTH*NUM_INSTANCES];
-               assign counter_updates_expanded[(j+1)*COUNTER_INPUT_WIDTH*INSTANCES - 1 : 
-                                               j*COUNTER_INPUT_WIDTH*INSTANCES + 
+               assign counter_updates_expanded[(j+1)*COUNTER_INPUT_WIDTH*INSTANCES - 1 :
+                                               j*COUNTER_INPUT_WIDTH*INSTANCES +
                                                NUM_INSTANCES*COUNTER_INPUT_WIDTH] = 0;
 
-               assign counter_decrement_expanded[j*INSTANCES + NUM_INSTANCES - 1 : j*INSTANCES] = 
+               assign counter_decrement_expanded[j*INSTANCES + NUM_INSTANCES - 1 : j*INSTANCES] =
                       counter_decrement_ordered[(j+1)*NUM_INSTANCES + j*NUM_INSTANCES];
                assign counter_decrement_expanded[(j+1)*INSTANCES - 1 : j*INSTANCES + NUM_INSTANCES] = 0;
             end
@@ -425,19 +419,19 @@ endgenerate
             for(j=0; j<NUM_SOFTWARE_REGS; j=j+1) begin:gen_ordered_sw_regs
                assign software_regs_ordered[(j+1)*`CPCI_NF2_DATA_WIDTH - 1: j*`CPCI_NF2_DATA_WIDTH] =
                       software_regs_expanded[j*`CPCI_NF2_DATA_WIDTH*INSTANCES +
-                                             NUM_INSTANCES*`CPCI_NF2_DATA_WIDTH - 1: 
+                                             NUM_INSTANCES*`CPCI_NF2_DATA_WIDTH - 1:
                                              j*`CPCI_NF2_DATA_WIDTH];
             end
          end
-         
+
          if (NUM_HARDWARE_REGS>0) begin
             for(j=0; j<NUM_HARDWARE_REGS; j=j+1) begin:gen_ordered_hw_regs
                assign hardware_regs_expanded[j*`CPCI_NF2_DATA_WIDTH*INSTANCES +
-                                             NUM_INSTANCES*`CPCI_NF2_DATA_WIDTH - 1 : 
-                                             j*`CPCI_NF2_DATA_WIDTH*INSTANCES] = 
+                                             NUM_INSTANCES*`CPCI_NF2_DATA_WIDTH - 1 :
+                                             j*`CPCI_NF2_DATA_WIDTH*INSTANCES] =
                       hardware_regs_ordered[(j+1)*`CPCI_NF2_DATA_WIDTH*NUM_INSTANCES:
                                             j*`CPCI_NF2_DATA_WIDTH*NUM_INSTANCES];
-               assign hardware_regs_expanded[(j+1)*`CPCI_NF2_DATA_WIDTH*INSTANCES - 1 : 
+               assign hardware_regs_expanded[(j+1)*`CPCI_NF2_DATA_WIDTH*INSTANCES - 1 :
                                              j*`CPCI_NF2_DATA_WIDTH*INSTANCES +
                                              NUM_INSTANCES*`CPCI_NF2_DATA_WIDTH] = 0;
             end
@@ -465,5 +459,5 @@ endgenerate
          assign hw_reg_addr_out = hw_reg_addr_out_swapped;
       end
    endgenerate
-                                                                                                  
+
 endmodule // generic_regs

@@ -7,7 +7,6 @@ module pipeline_top_regs #(
   input  wire                         clk,
   input  wire                         reset,
 
-  // --- Register bus in/out
   input  wire                         reg_req_in,
   input  wire                         reg_ack_in,
   input  wire                         reg_rd_wr_L_in,
@@ -22,14 +21,12 @@ module pipeline_top_regs #(
   output wire [`CPCI_NF2_DATA_WIDTH-1:0]  reg_data_out,
   output wire [UDP_REG_SRC_WIDTH-1:0]     reg_src_out,
 
-  // --- debug out (optional)
   output wire [8:0]                   pc_dbg,
   output wire [31:0]                  if_instr_dbg
 );
 
-  // ---------------------------
-  // SW regs from generic_regs
-  // ---------------------------
+
+//===================SW REGS===================
   wire [31:0] sw_ctrl;
   wire [31:0] sw_imem_addr;
   wire [31:0] sw_imem_wdata;
@@ -37,44 +34,31 @@ module pipeline_top_regs #(
   wire [31:0] sw_dmem_wdata_lo;
   wire [31:0] sw_dmem_wdata_hi;
   wire [31:0] sw_reserved;
-
-  // ---------------------------
-  // 2) Control pulse generation (edge detect on SW0 bits)
-  // ---------------------------
   reg  [31:0] sw_ctrl_d;
 
   always @(posedge clk) begin
-    if (reset) sw_ctrl_d <= 32'h0;
-    else       sw_ctrl_d <= sw_ctrl;
+    if (reset) begin
+      sw_ctrl_d <= 32'h0;
+    end else begin
+      sw_ctrl_d <= sw_ctrl;
+    end     
   end
 
-  wire run_level      = sw_ctrl[0];
-
+  wire run_level      =  sw_ctrl[0];
   wire step_pulse     =  sw_ctrl[1] & ~sw_ctrl_d[1];
   wire pc_reset_pulse =  sw_ctrl[2] & ~sw_ctrl_d[2];
-
   wire imem_we_pulse  =  sw_ctrl[3] & ~sw_ctrl_d[3];
-
   wire dmem_prog_en   =  sw_ctrl[4];
   wire dmem_prog_we   =  sw_ctrl[5];
-
-  // ---------------------------
-  // 3) IMEM programming signals
-  // ---------------------------
   wire        imem_prog_we    = imem_we_pulse;
   wire [8:0]  imem_prog_addr  = sw_imem_addr[8:0];
   wire [31:0] imem_prog_wdata = sw_imem_wdata;
-
-  // ---------------------------
-  // 4) DMEM programming signals (Port B)
-  // ---------------------------
   wire [7:0]  dmem_prog_addr  = sw_dmem_addr[7:0];
   wire [63:0] dmem_prog_wdata = {sw_dmem_wdata_hi, sw_dmem_wdata_lo};
   wire [63:0] dmem_prog_rdata;
 
-  // ---------------------------
-  // 5) Pipeline instance
-  // ---------------------------
+//=============================PIPELINE=============================
+
   pipeline u_pipeline (
     .clk             (clk),
     .reset           (reset),
@@ -97,25 +81,18 @@ module pipeline_top_regs #(
     .if_instr_dbg    (if_instr_dbg)
   );
 
-  // ---------------------------
-  // 6) HW regs back to software
-  // ---------------------------
-  wire [31:0] hw_pc_dbg        = {23'h0, pc_dbg};            // pack into 32
+//=============================GENERIC_REGS========================================
+  wire [31:0] hw_pc_dbg        = {23'h0, pc_dbg}; 
   wire [31:0] hw_if_instr      = if_instr_dbg;
   wire [31:0] hw_dmem_rdata_lo = dmem_prog_rdata[31:0];
   wire [31:0] hw_dmem_rdata_hi = dmem_prog_rdata[63:32];
+  wire [4*32-1:0] hardware_regs_bus;
+  assign {hw_dmem_rdata_hi,
+          hw_dmem_rdata_lo,
+          hw_if_instr,
+          hw_pc_dbg} = hardware_regs_bus;
 
-  // Pack hardware_regs bus: {HW3, HW2, HW1, HW0}
-  wire [4*32-1:0] hardware_regs_bus = {
-    hw_dmem_rdata_hi,
-    hw_dmem_rdata_lo,
-    hw_if_instr,
-    hw_pc_dbg
-  };
-
-  // Pack software_regs bus: {SW6..SW0}
   wire [7*32-1:0] software_regs_bus;
-
   assign {sw_reserved,
           sw_dmem_wdata_hi,
           sw_dmem_wdata_lo,
@@ -124,13 +101,22 @@ module pipeline_top_regs #(
           sw_imem_addr,
           sw_ctrl} = software_regs_bus;
 
-  // ---------------------------
-  // 7) generic_regs instantiation
-  // ---------------------------
+  //=========================
+  // CPU request:
+  // reg_reg         ->    1
+  // reg_rd_wr_L     ->    1 for read, 0 for write
+  // reg_addr        ->    {tag, addr}
+  // reg_data        ->    data
+  // regeric response:
+  // reg_rd_wr_L     ->    same as request
+  // reg_addr        ->    same as request
+  // reg_data        ->    data to be read when reg_rd_wr_L is 1, ignored otherwise
+  // reg_ack         ->    1 when the request is done
+  //==========================
   generic_regs #(
     .UDP_REG_SRC_WIDTH (UDP_REG_SRC_WIDTH),
-    .TAG               (`PIPE_BLOCK_ADDR),     
-    .REG_ADDR_WIDTH    (`PIPE_REG_ADDR_WIDTH),
+    .TAG               (`PIPE_BLOCK_ADDR),// Only the address with this tag will be decoded and sent to this module
+    .REG_ADDR_WIDTH    (`PIPE_REG_ADDR_WIDTH),// Only the lower REG_ADDR_WIDTH bits of the address will be decoded
     .NUM_COUNTERS      (0),
     .NUM_SOFTWARE_REGS (7),
     .NUM_HARDWARE_REGS (4)
