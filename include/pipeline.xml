@@ -32,7 +32,7 @@
 
     <nf:register>
       <nf:name>imem_wdata</nf:name>
-      <nf:description>I-mem program write data (32-bit)</nf:description>
+      <nf:description>I-mem program write data (32-bit [31:0])</nf:description>
       <nf:type>generic_software32</nf:type>
     </nf:register>
 
@@ -44,13 +44,13 @@
 
     <nf:register>
       <nf:name>dmem_wdata_lo</nf:name>
-      <nf:description>D-mem Port-B write data low 32 bits</nf:description>
+      <nf:description>D-mem Port-B write data low 32 bits [31:0]</nf:description>
       <nf:type>generic_software32</nf:type>
     </nf:register>
 
     <nf:register>
       <nf:name>dmem_wdata_hi</nf:name>
-      <nf:description>D-mem Port-B write data high 32 bits</nf:description>
+      <nf:description>D-mem Port-B write data high 32 bits [63:32]</nf:description>
       <nf:type>generic_software32</nf:type>
     </nf:register>
 
@@ -63,7 +63,7 @@
     <!-- hardware regs -->
     <nf:register>
       <nf:name>pc_dbg</nf:name>
-      <nf:description>PC debug (lower 9 bits valid)</nf:description>
+      <nf:description>PC debug (lower 9 bits valid [8:0])</nf:description>
       <nf:type>generic_hardware32</nf:type>
     </nf:register>
 
