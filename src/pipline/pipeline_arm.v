@@ -1,53 +1,61 @@
 `timescale 1ns/1ps
 // =============================================================================
-// pipeline_p.v  ?  Completed 5-stage ARM-32 pipeline (no forwarding / hazard
-//                  detection).  Programmer must insert NOPs between dependent
-//                  instructions.
+// pipeline_p.v  –  5-stage ARM-32 pipeline, extended instruction set.
 //
-// Pipeline stages:  IF ? IF/ID ? ID ? ID/EX ? EX ? EX/MEM ? MEM ? MEM/WB ? WB
-// (The extra MEM and MEM/WB registers already present in the original file are
-//  kept as-is; they act as additional buffering stages.)
+// Pipeline stages:  IF → IF/ID → ID → ID/EX → EX → EX/MEM → MEM → MEM/WB → WB
+// No forwarding / hazard detection – programmer inserts NOPs.
 //
-// ARM-32 instruction encoding used:
-// ----------------------------------
-//  [31:28]  cond   ? 1110 (always; condition codes not evaluated)
-//  [27:26]  op     ? 00=data-proc, 01=load/store, 10=branch
+// ─── Original instructions (unchanged) ───────────────────────────────────────
+//  NOP  32'hE000_0000   (AND R0,R0,R0, result discarded)
+//  MOV  Rd,#imm8        op=00 I=1 opcode=1101
+//  ADD  Rd,Rn,Rm/imm8   op=00 opcode=0100
+//  SUB  Rd,Rn,Rm/imm8   op=00 opcode=0010
+//  AND  Rd,Rn,Rm        op=00 opcode=0000
+//  ORR  Rd,Rn,Rm        op=00 opcode=1100
+//  EOR  Rd,Rn,Rm        op=00 opcode=0001
+//  LDR  Rd,[Rn,#off12]  op=01 L=1
+//  STR  Rd,[Rn,#off12]  op=01 L=0
+//  B    off24            op=10 [27:25]=101 bit24=0  (unconditional branch)
+//  BL   off24            op=10 [27:25]=101 bit24=1  (branch-and-link)
+//    Jumps to target; saves return address (BL_word+1) into R14.
+//    Encoding: {4'hE, 4'b1011, off24}
+//    Return with: JR R14  (= BX R14)
+//  BX   Rm              op=00 [27:4]=24'h12FFF1  (jump register = JR)
 //
-//  Data-processing (op=00):
-//    [25]   I      ? 1=operand2 is 8-bit immediate, 0=register
-//    [24:21] opcode ? 0100 ADD, 0010 SUB, 0000 AND, 1100 ORR
-//                     1101 MOV, 0001 EOR, 1010 CMP(no WB), 1000 TST(no WB)
-//    [20]   S      ? set flags (not used)
-//    [19:16] Rn    ? first source register
-//    [15:12] Rd    ? destination register
-//    [11:8]  rot   ? rotation amount (ignored; imm treated as zero-extended)
-//    [7:0]   imm8  ? 8-bit immediate (when I=1)
-//    [3:0]   Rm    ? second source register (when I=0)
+// ─── New instructions ─────────────────────────────────────────────────────────
 //
-//  Load / Store (op=01):
-//    [25]   0      ? immediate offset
-//    [24]   P=1    ? pre-index
-//    [23]   U      ? 1=add offset, 0=subtract
-//    [22]   B=0    ? word
-//    [21]   W=0    ? no writeback
-//    [20]   L      ? 1=LDR, 0=STR
-//    [19:16] Rn   ? base register
-//    [15:12] Rd   ? dest (LDR) / source (STR)
-//    [11:0]  imm12 ? unsigned byte offset
+//  SLL  Rd,Rn,Rm        Shift Left  by Rm[5:0]
+//    {4'hE, 3'b000, 4'b0110, 1'b0, Rn, Rd, 8'h00, Rm}
+//    (I=0 selects variable-shift; I=1 preserves old shift-by-1 behaviour)
 //
-//  Branch (op=10):
-//    [27:24] 1010  ? B,  1011 = BL
-//    [23:0]  signed offset (from instruction word address; pipeline adds 2)
+//  SRL  Rd,Rn,Rm        Shift Right by Rm[5:0]
+//    {4'hE, 3'b000, 4'b0111, 1'b0, Rn, Rd, 8'h00, Rm}
 //
-//  BX Rm (branch-and-exchange, op=00):
-//    [27:4]  24'h12FFF1, [3:0] Rm
+//  JR   Rm              Jump Register (identical to BX Rm)
+//    {4'hE, 24'h12FFF1, Rm[3:0]}
 //
-//  NOP:  32'hE000_0000  (AND R0,R0,R0 with result discarded)
+//  J    target9         Unconditional absolute jump to 9-bit word address
+//    inst[31:26] = 6'b111010  (op=2'b11 sub=2'b10)
+//    inst[25:0]  = zero-padded target; lower 9 bits used as new PC
+//    {6'b111010, 17'b0, target9[8:0]}
 //
-// Register file:  16 × 64-bit  (R0-R15; R15=PC not wired here)
-// ALU:            64-bit
-// Data memory:    256 × 64-bit (D_M_64bit_256)
-// Instruction mem: 512 × 32-bit (I_M_32bit_512depth)
+//  SLT  Rd,Rn,Rm        Set Less Than (signed): Rd = (Rn < Rm) ? 1 : 0
+//    {4'hE, 3'b000, 4'b1011, 1'b0, Rn, Rd, 8'h00, Rm}
+//
+//  BEQ  Rn,Rm,off16     Branch if Equal (Rn == Rm)
+//    inst[31:28]=4'hE  inst[27:24]=4'b1000
+//    inst[23:20]=Rn  inst[19:16]=Rm  inst[15:0]=off16
+//    branch_target = ifid_pc + 2 + sign_extend(off16)
+//    {4'hE, 4'b1000, Rn, Rm, 16'(off16)}
+//
+//  BNE  Rn,Rm,off16     Branch if Not Equal (Rn != Rm)
+//    inst[27:24]=4'b1001
+//    {4'hE, 4'b1001, Rn, Rm, 16'(off16)}
+//
+// ─── Register file:   16 × 64-bit  (R0–R15) ──────────────────────────────────
+// ─── ALU:             64-bit ──────────────────────────────────────────────────
+// ─── Data memory:     256 × 64-bit  (D_M_64bit_256) ──────────────────────────
+// ─── Instruction mem: 512 × 32-bit  (I_M_32bit_512depth) ─────────────────────
 // =============================================================================
 module pipeline (
   input  wire        clk,
@@ -57,12 +65,12 @@ module pipeline (
   input  wire        step,
   input  wire        pc_reset_pulse,
 
-  // I-mem programming interface  ? DO NOT CHANGE
+  // I-mem programming interface  ← DO NOT CHANGE
   input  wire        imem_prog_we,
   input  wire [8:0]  imem_prog_addr,
   input  wire [31:0] imem_prog_wdata,
 
-  // D-mem programming interface  ? DO NOT CHANGE
+  // D-mem programming interface  ← DO NOT CHANGE
   input  wire        dmem_prog_en,
   input  wire        dmem_prog_we,
   input  wire [7:0]  dmem_prog_addr,
@@ -74,70 +82,54 @@ module pipeline (
 );
 
 // ===========================================================================
-// PIPELINE CONTROL LOGIC   (original ? untouched)
+// PIPELINE CONTROL
 // ===========================================================================
   reg step_d;
-
   always @(posedge clk) begin
-    if (reset || pc_reset_pulse)
-      step_d <= 1'b0;
-    else
-      step_d <= step;
+    if (reset || pc_reset_pulse) step_d <= 1'b0;
+    else                         step_d <= step;
   end
 
   wire step_pulse = step & ~step_d;
   wire advance    = run | step_pulse;
 
-  // Forward declarations ? drivers are in the EX stage section below.
-  // Declared here so every always block in IF, IF/ID, and ID/EX can see them.
+  // Forward declarations – driven in EX stage below.
   wire        ex_branch_taken;
   wire [8:0]  ex_branch_target;
 
 // ===========================================================================
-// IF STAGE   (original ? untouched except branch redirect wired to pc)
+// IF STAGE
 // ===========================================================================
-  reg  [8:0] pc;
+  reg [8:0] pc;
   assign pc_dbg = pc;
 
   wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc;
-  wire [31:0] imem_din_mux  = imem_prog_wdata;
-  wire        imem_we_mux   = imem_prog_we;
   wire [31:0] imem_dout;
 
   I_M_32bit_512depth u_imem (
-    .addr(imem_addr_mux),
-    .clk (clk),
-    .din (imem_din_mux),
-    .dout(imem_dout),
-    .en  (1'b1),
-    .we  (imem_we_mux)
+    .addr (imem_addr_mux),
+    .clk  (clk),
+    .din  (imem_prog_wdata),
+    .dout (imem_dout),
+    .en   (1'b1),
+    .we   (imem_prog_we)
   );
   assign if_instr_dbg = imem_dout;
 
-  // PC update ? branch redirect added; original increment logic preserved
-  // ex_branch_taken and ex_branch_target come from EX stage (defined below)
   always @(posedge clk) begin
-    if (reset) begin
-      pc <= 9'd0;
-    end else if (pc_reset_pulse) begin
-      pc <= 9'd0;
-    end else if (ex_branch_taken) begin
-      // Redirect PC to branch target; flush is handled in IF/ID register
-      pc <= ex_branch_target;
-    end else if (advance) begin
-      pc <= pc + 9'd1;
-    end
+    if      (reset || pc_reset_pulse) pc <= 9'd0;
+    else if (ex_branch_taken)         pc <= ex_branch_target;
+    else if (advance)                 pc <= pc + 9'd1;
   end
 
 // ===========================================================================
-// IF/ID PIPELINE REGISTER   (original logic preserved; flush on branch added)
+// IF/ID PIPELINE REGISTER
 // ===========================================================================
-  reg  [31:0] ifid_instr;
-  reg  [8:0]  ifid_pc;      // PC of the fetched instruction (for branch target calc)
+  reg [31:0] ifid_instr;
+  reg [8:0]  ifid_pc;
 
   always @(posedge clk) begin
     if (reset || pc_reset_pulse || ex_branch_taken) begin
-      // Flush: insert NOP bubble when branch is taken
       ifid_instr <= 32'h0;
       ifid_pc    <= 9'd0;
     end else if (advance) begin
@@ -147,30 +139,67 @@ module pipeline (
   end
 
 // ===========================================================================
-// ID STAGE  ?  Instruction decode + register file read
+// ID STAGE  –  Instruction decode + register-file read
 // ===========================================================================
 
   // ---------------------------------------------------------------------------
-  // ARM-32 instruction field extraction
+  // ARM-32 field extraction
   // ---------------------------------------------------------------------------
-  wire [1:0]  if_op      = ifid_instr[27:26]; // instruction class
-  wire        if_I       = ifid_instr[25];     // immediate flag
-  wire [3:0]  if_opcode  = ifid_instr[24:21];  // data-proc opcode
-  wire        if_L       = ifid_instr[20];      // load/link bit
-  wire [3:0]  if_Rn      = ifid_instr[19:16];  // source / base register
-  wire [3:0]  if_Rd      = ifid_instr[15:12];  // destination register
-  wire [11:0] if_op2     = ifid_instr[11:0];   // shifter operand / offset12
-  wire [3:0]  if_Rm      = ifid_instr[3:0];    // second source register
-  wire [7:0]  if_imm8    = ifid_instr[7:0];    // 8-bit immediate
-  wire [23:0] if_off24   = ifid_instr[23:0];   // branch offset
-  wire        if_U       = ifid_instr[23];      // LDR/STR: 1=add offset
-  wire [11:0] if_imm12   = ifid_instr[11:0];   // LDR/STR offset
+  wire [1:0]  if_op     = ifid_instr[27:26];
+  wire        if_I      = ifid_instr[25];
+  wire [3:0]  if_opcode = ifid_instr[24:21];
+  wire        if_L      = ifid_instr[20];
+  wire [3:0]  if_Rn     = ifid_instr[19:16];
+  wire [3:0]  if_Rd     = ifid_instr[15:12];
+  wire [3:0]  if_Rm     = ifid_instr[3:0];
+  wire [7:0]  if_imm8   = ifid_instr[7:0];
+  wire [23:0] if_off24  = ifid_instr[23:0];
+  wire        if_U      = ifid_instr[23];
+  wire [11:0] if_imm12  = ifid_instr[11:0];
 
-  // Register file read addresses
-  // For STR, the data to store is in Rd (register file port 1 reads Rm normally,
-  // but for stores we need Rd's value; we mux the read address accordingly)
-  wire [3:0]  id_reg1    = if_Rn;
-  wire [3:0]  id_reg2    = (if_op == 2'b01 && !if_L) ? if_Rd : if_Rm;
+  // BEQ/BNE field extraction (custom encoding – lives in inst[27:24]=1000/1001)
+  wire [3:0]  if_beq_type = ifid_instr[27:24];  // 4'b1000=BEQ, 4'b1001=BNE
+  wire [3:0]  if_beq_Rn   = ifid_instr[23:20];
+  wire [3:0]  if_beq_Rm   = ifid_instr[19:16];
+  wire [15:0] if_beq_off  = ifid_instr[15:0];
+
+  // J field extraction (inst[31:26]=6'b111010): inst[25:0]=target26
+  wire [25:0] if_j_target = ifid_instr[25:0];
+
+  // ---------------------------------------------------------------------------
+  // ALU control constants  (must match ALU.v)
+  // ---------------------------------------------------------------------------
+  localparam ALU_NOP     = 4'b0000;
+  localparam ALU_ADD     = 4'b0001;
+  localparam ALU_SUB     = 4'b0010;
+  localparam ALU_AND     = 4'b0011;
+  localparam ALU_OR      = 4'b0100;
+  localparam ALU_XNOR    = 4'b0101;
+  localparam ALU_SHIFTL  = 4'b0110;   // shift left  by 1 (immediate)
+  localparam ALU_SHIFTR  = 4'b0111;   // shift right by 1 (immediate)
+  localparam ALU_SHIFTLV = 4'b1000;   // shift left  by B[5:0] (variable) – NEW
+  localparam ALU_SHIFTRV = 4'b1001;   // shift right by B[5:0] (variable) – NEW
+  localparam ALU_SLT     = 4'b1010;   // set less than (signed)            – NEW
+
+  // ---------------------------------------------------------------------------
+  // Detect BEQ/BNE before normal op decode
+  // BEQ: cond=E, [27:24]=4'b1000    BNE: cond=E, [27:24]=4'b1001
+  // ---------------------------------------------------------------------------
+  wire is_beqbne = (ifid_instr[31:28] == 4'hE) &&
+                   ((if_beq_type == 4'b1000) || (if_beq_type == 4'b1001));
+
+  // Detect J instruction: inst[31:26]=6'b111010
+  wire is_j = (ifid_instr[31:26] == 6'b111010);
+
+  // ---------------------------------------------------------------------------
+  // Register-file read port addressing
+  //   BEQ/BNE: port0=Rn, port1=Rm  (both comparison operands)
+  //   STR:     port0=Rn(base), port1=Rd(data to store)
+  //   others:  port0=Rn, port1=Rm
+  // ---------------------------------------------------------------------------
+  wire [3:0] id_reg1 = is_beqbne ? if_beq_Rn : if_Rn;
+  wire [3:0] id_reg2 = is_beqbne ? if_beq_Rm :
+                       (if_op == 2'b01 && !if_L) ? if_Rd : if_Rm;
 
   wire [63:0] rf_r1data;
   wire [63:0] rf_r2data;
@@ -178,126 +207,155 @@ module pipeline (
   // ---------------------------------------------------------------------------
   // Combinational decoder
   // ---------------------------------------------------------------------------
-  // ALU opcode encoding  (matches ALU.v)
-  localparam ALU_ADD    = 4'b0001;
-  localparam ALU_SUB    = 4'b0010;
-  localparam ALU_AND    = 4'b0011;
-  localparam ALU_OR     = 4'b0100;
-  localparam ALU_XNOR   = 4'b0101;
-  localparam ALU_SHIFTL = 4'b0110;
-  localparam ALU_SHIFTR = 4'b0111;
-  localparam ALU_NOP    = 4'b0000;
-  localparam ALU_PASS_A = 4'b1000;
-  localparam ALU_PASS_B = 4'b1001;
-  
-  reg  [3:0]  dec_alu_ctrl;
-  reg         dec_use_imm;
-  reg  [63:0] dec_imm64;
-  reg         dec_reg_wen;
-  reg         dec_mem_wen;
-  reg         dec_is_load;
-  reg         dec_is_branch;
-  reg         dec_is_jump;
-  reg  [8:0]  dec_branch_target;
+  reg [3:0]  dec_alu_ctrl;
+  reg        dec_use_imm;
+  reg [63:0] dec_imm64;
+  reg        dec_reg_wen;
+  reg        dec_mem_wen;
+  reg        dec_is_load;
+  reg        dec_is_branch;
+  reg        dec_is_jump;
+  reg [8:0]  dec_branch_target;
+  reg        dec_is_cond_branch; // 1 = BEQ or BNE
+  reg        dec_branch_cond;    // 0 = BEQ, 1 = BNE
+  reg        dec_is_bl;          // 1 = BL: write return addr (BL_word+1) to R14
 
   always @(*) begin
     // Safe defaults
-    dec_alu_ctrl     = ALU_NOP;
-    dec_use_imm      = 1'b0;
-    dec_imm64        = 64'b0;
-    dec_reg_wen      = 1'b0;
-    dec_mem_wen      = 1'b0;
-    dec_is_load      = 1'b0;
-    dec_is_branch    = 1'b0;
-    dec_is_jump      = 1'b0;
-    // Branch target: PC_of_instruction + 2 + sign_extended_offset24
-    // +2 because by the time the branch reaches EX the PC has already
-    // advanced 2 words beyond the branch instruction word.
-    //dec_branch_target = ifid_pc + 9'd2+ {{(9-24){if_off24[23]}}, if_off24};
-	 dec_branch_target = ifid_pc + 9'd2+ if_off24[8:0];
+    dec_alu_ctrl      = ALU_NOP;
+    dec_use_imm       = 1'b0;
+    dec_imm64         = 64'b0;
+    dec_reg_wen       = 1'b0;
+    dec_mem_wen       = 1'b0;
+    dec_is_load       = 1'b0;
+    dec_is_branch     = 1'b0;
+    dec_is_jump       = 1'b0;
+    dec_branch_target = 9'd0;
+    dec_is_cond_branch= 1'b0;
+    dec_branch_cond   = 1'b0;
+    dec_is_bl         = 1'b0;
 
-    case (if_op)
+    // Standard B/BL branch target (may be overridden below)
+    // off24 is a signed 24-bit word offset.  Cast it to signed so Verilog
+    // sign-extends during the 9-bit addition; the result is automatically
+    // truncated to 9 bits by the assignment target width.
+    dec_branch_target = ifid_pc + 9'd2 + if_off24[8:0];
 
-      // -----------------------------------------------------------------------
-      // 2'b00  Data-processing / BX
-      // -----------------------------------------------------------------------
-      2'b00: begin
-        // BX Rm  ?  inst[27:4] == 24'h12FFF1
-        if (ifid_instr[27:4] == 24'h12FFF1) begin
-          dec_is_jump  = 1'b1;
-          // jump target = lower 9 bits of Rm (resolved in EX from rf_r2data)
-        end else begin
-          // Immediate operand
-          if (if_I) begin
-            dec_use_imm = 1'b1;
-            dec_imm64   = {56'b0, if_imm8};
-				//dec_alu_ctrl = ALU_PASS_B;
+    // ── Priority 1: BEQ / BNE ────────────────────────────────────────────────
+    if (is_beqbne) begin
+      // Use ALU to compute Rn - Rm; branch if zero (BEQ) or nonzero (BNE)
+      dec_alu_ctrl       = ALU_SUB;
+      dec_use_imm        = 1'b0;
+      dec_reg_wen        = 1'b0;
+      dec_is_branch      = 1'b1;
+      dec_is_cond_branch = 1'b1;
+      dec_branch_cond    = (if_beq_type == 4'b1001); // 1=BNE, 0=BEQ
+      // Branch target: ifid_pc + 2 + sign_extend(off16), truncated to 9 bits
+      dec_branch_target  = ifid_pc + 9'd2 + if_beq_off[8:0];
+
+    // ── Priority 2: J (absolute jump) ────────────────────────────────────────
+    end else if (is_j) begin
+      dec_is_branch     = 1'b1;
+      dec_branch_target = if_j_target[8:0];  // lower 9 bits = word address
+      dec_reg_wen       = 1'b0;
+
+    // ── Priority 3: Normal ARM-32 instructions ────────────────────────────────
+    end else begin
+      case (if_op)
+
+        // ── op=00: Data-processing, BX, SLT, SLL, SRL ──────────────────────
+        2'b00: begin
+          // BX Rm  (= JR Rm): inst[27:4] = 24'h12FFF1
+          if (ifid_instr[27:4] == 24'h12FFF1) begin
+            dec_is_jump = 1'b1;
+            // target = rf_r2data[8:0], resolved in EX
+
+          end else begin
+            // Immediate operand (I=1): 8-bit zero-extended
+            if (if_I) begin
+              dec_use_imm = 1'b1;
+              dec_imm64   = {56'b0, if_imm8};
+            end
+
+            case (if_opcode)
+              4'b0100: begin dec_alu_ctrl = ALU_ADD;   dec_reg_wen = 1'b1; end // ADD
+              4'b0010: begin dec_alu_ctrl = ALU_SUB;   dec_reg_wen = 1'b1; end // SUB
+              4'b0000: begin dec_alu_ctrl = ALU_AND;   dec_reg_wen = 1'b1; end // AND
+              4'b1100: begin dec_alu_ctrl = ALU_OR;    dec_reg_wen = 1'b1; end // ORR
+              4'b0001: begin dec_alu_ctrl = ALU_XNOR;  dec_reg_wen = 1'b1; end // EOR
+              4'b1101: begin dec_alu_ctrl = ALU_ADD;   dec_reg_wen = 1'b1; end // MOV
+              4'b1111: begin dec_alu_ctrl = ALU_XNOR;  dec_reg_wen = 1'b1; end // MVN
+              4'b1010: begin dec_alu_ctrl = ALU_SUB;   dec_reg_wen = 1'b0; end // CMP
+              4'b1000: begin dec_alu_ctrl = ALU_AND;   dec_reg_wen = 1'b0; end // TST
+              4'b1001: begin dec_alu_ctrl = ALU_XNOR;  dec_reg_wen = 1'b0; end // TEQ
+
+              // SLL Rd,Rn,Rm: variable left shift (I=0) / shift-by-1 (I=1)
+              4'b0110: begin
+                dec_reg_wen  = 1'b1;
+                dec_alu_ctrl = if_I ? ALU_SHIFTL : ALU_SHIFTLV;
+              end
+
+              // SRL Rd,Rn,Rm: variable right shift (I=0) / shift-by-1 (I=1)
+              4'b0111: begin
+                dec_reg_wen  = 1'b1;
+                dec_alu_ctrl = if_I ? ALU_SHIFTR : ALU_SHIFTRV;
+              end
+
+              // SLT Rd,Rn,Rm  (opcode=1011, unused in ARM)
+              4'b1011: begin dec_alu_ctrl = ALU_SLT;   dec_reg_wen = 1'b1; end
+
+              4'b0101: begin dec_alu_ctrl = ALU_ADD;   dec_reg_wen = 1'b1; end // ADC→ADD
+              4'b0011: begin dec_alu_ctrl = ALU_SUB;   dec_reg_wen = 1'b1; end // RSB
+              default: begin dec_alu_ctrl = ALU_NOP;   dec_reg_wen = 1'b0; end
+            endcase
           end
+        end // op=00
 
-          case (if_opcode)
-            4'b0100: begin dec_alu_ctrl = ALU_ADD;    dec_reg_wen = 1'b1; end // ADD
-            4'b0010: begin dec_alu_ctrl = ALU_SUB;    dec_reg_wen = 1'b1; end // SUB
-            4'b0000: begin dec_alu_ctrl = ALU_AND;    dec_reg_wen = 1'b1; end // AND
-            4'b1100: begin dec_alu_ctrl = ALU_OR;     dec_reg_wen = 1'b1; end // ORR
-            4'b0001: begin dec_alu_ctrl = ALU_XNOR;   dec_reg_wen = 1'b1; end // EOR
-            4'b1101: begin dec_alu_ctrl = ALU_ADD;    dec_reg_wen = 1'b1; end // MOV (Rn=0 by convention)
-            4'b1111: begin dec_alu_ctrl = ALU_XNOR;   dec_reg_wen = 1'b1; end // MVN
-            4'b1010: begin dec_alu_ctrl = ALU_SUB;    dec_reg_wen = 1'b0; end // CMP (flags only)
-            4'b1000: begin dec_alu_ctrl = ALU_AND;    dec_reg_wen = 1'b0; end // TST
-            4'b1001: begin dec_alu_ctrl = ALU_XNOR;   dec_reg_wen = 1'b0; end // TEQ
-            4'b0110: begin dec_alu_ctrl = ALU_SHIFTL; dec_reg_wen = 1'b1; end // LSL (A<<1)
-            4'b0111: begin dec_alu_ctrl = ALU_SHIFTR; dec_reg_wen = 1'b1; end // LSR (A>>1)
-            4'b0101: begin dec_alu_ctrl = ALU_ADD;    dec_reg_wen = 1'b1; end // ADC (treat as ADD)
-            4'b0011: begin dec_alu_ctrl = ALU_SUB;    dec_reg_wen = 1'b1; end // RSB
-            default: begin dec_alu_ctrl = ALU_NOP;    dec_reg_wen = 1'b0; end
-          endcase
-        end
-      end
+        // ── op=01: Load / Store ─────────────────────────────────────────────
+        2'b01: begin
+          dec_alu_ctrl = if_U ? ALU_ADD : ALU_SUB;
+          dec_use_imm  = 1'b1;
+          dec_imm64    = {52'b0, if_imm12};
 
-      // -----------------------------------------------------------------------
-      // 2'b01  Load / Store  (LDR / STR)
-      // -----------------------------------------------------------------------
-      2'b01: begin
-        // Effective address = Rn  +/-  imm12
-        dec_alu_ctrl = if_U ? ALU_ADD : ALU_SUB;
-        dec_use_imm  = 1'b1;
-        dec_imm64    = {52'b0, if_imm12};
+          if (if_L) begin              // LDR
+            dec_is_load = 1'b1;
+            dec_reg_wen = 1'b1;
+          end else begin               // STR
+            dec_mem_wen = 1'b1;
+          end
+        end // op=01
 
-        if (if_L) begin         // LDR
-          dec_is_load  = 1'b1;
-          dec_reg_wen  = 1'b1;
-          dec_mem_wen  = 1'b0;
-        end else begin           // STR
-          dec_is_load  = 1'b0;
-          dec_reg_wen  = 1'b0;
-          dec_mem_wen  = 1'b1;
-        end
-      end
+        // ── op=10: Branch B / BL ────────────────────────────────────────────
+        2'b10: begin
+          if (ifid_instr[27:25] == 3'b101) begin
+            dec_is_branch = 1'b1;
+            if (ifid_instr[24]) begin   // bit24=1 → BL
+              dec_is_bl   = 1'b1;
+              dec_reg_wen = 1'b1;       // write return address to R14
+              // dec_wreg forced to R14 outside the case (see below)
+            end
+            // plain B: dec_reg_wen stays 0, dec_is_bl stays 0
+          end
+        end // op=10
 
-      // -----------------------------------------------------------------------
-      // 2'b10  Branch  (B / BL)
-      // -----------------------------------------------------------------------
-      2'b10: begin
-        if (ifid_instr[27:25] == 3'b101) begin
-          dec_is_branch = 1'b1;
-          // BL also saves return address in R14; assert reg_wen with Rd=R14
-          dec_reg_wen   = ifid_instr[24]; // 1 = BL
-        end
-      end
+        default: ; // NOP
+      endcase
+    end
+  end // always decoder
 
-      default: ; // NOP ? all defaults
-    endcase
-  end
+  // For BL the destination register is always R14 (link register),
+  // regardless of what the instruction's Rd field says.
+  wire [3:0] dec_wreg_final = dec_is_bl ? 4'd14 : if_Rd;
 
   // ---------------------------------------------------------------------------
-  // WB bus (fed back from MEM/WB stage ? defined further below)
+  // WB bus  (driven from MEM/WB stage; declared here for forward reference)
   // ---------------------------------------------------------------------------
   wire        wb_wen;
   wire [3:0]  wb_waddr;
   wire [63:0] wb_wdata;
 
   // ---------------------------------------------------------------------------
-  // Register file  (original instance kept; widths corrected to match decoder)
+  // Register file
   // ---------------------------------------------------------------------------
   REG_FILE #(.data_width(64), .addr_width(4)) u_rf (
     .clk    (clk),
@@ -311,61 +369,70 @@ module pipeline (
   );
 
   // ---------------------------------------------------------------------------
-  // ID ? ID/EX pipeline registers
+  // ID → ID/EX pipeline registers
   // ---------------------------------------------------------------------------
-  reg  [3:0]  idex_alu_ctrl;
-  reg         idex_use_imm;
-  reg  [63:0] idex_imm64;
-  reg         idex_reg_wen;
-  reg         idex_mem_wen;
-  reg         idex_is_load;
-  reg         idex_is_branch;
-  reg         idex_is_jump;
-  reg  [8:0]  idex_branch_target;
-  reg  [3:0]  idex_wreg;          // destination register address
-  reg  [63:0] idex_r1data;        // Rn value
-  reg  [63:0] idex_r2data;        // Rm / store-data value
+  reg [3:0]  idex_alu_ctrl;
+  reg        idex_use_imm;
+  reg [63:0] idex_imm64;
+  reg        idex_reg_wen;
+  reg        idex_mem_wen;
+  reg        idex_is_load;
+  reg        idex_is_branch;
+  reg        idex_is_jump;
+  reg [8:0]  idex_branch_target;
+  reg [3:0]  idex_wreg;
+  reg [63:0] idex_r1data;
+  reg [63:0] idex_r2data;
+  reg        idex_is_cond_branch; // 1 = BEQ or BNE (condition checked in EX)
+  reg        idex_branch_cond;    // 0 = BEQ (take if zero), 1 = BNE (take if nonzero)
+  reg        idex_is_bl;          // 1 = BL: EX writes return address instead of ALU result
+  reg [8:0]  idex_pc;             // word address of the BL instruction itself
 
   always @(posedge clk) begin
     if (reset || pc_reset_pulse || ex_branch_taken) begin
-      // Flush: NOP bubble
-      idex_alu_ctrl      <= ALU_NOP;
-      idex_use_imm       <= 1'b0;
-      idex_imm64         <= 64'b0;
-      idex_reg_wen       <= 1'b0;
-      idex_mem_wen       <= 1'b0;
-      idex_is_load       <= 1'b0;
-      idex_is_branch     <= 1'b0;
-      idex_is_jump       <= 1'b0;
-      idex_branch_target <= 9'd0;
-      idex_wreg          <= 4'h0;
-      idex_r1data        <= 64'h0;
-      idex_r2data        <= 64'h0;
+      idex_alu_ctrl       <= ALU_NOP;
+      idex_use_imm        <= 1'b0;
+      idex_imm64          <= 64'b0;
+      idex_reg_wen        <= 1'b0;
+      idex_mem_wen        <= 1'b0;
+      idex_is_load        <= 1'b0;
+      idex_is_branch      <= 1'b0;
+      idex_is_jump        <= 1'b0;
+      idex_branch_target  <= 9'd0;
+      idex_wreg           <= 4'h0;
+      idex_r1data         <= 64'h0;
+      idex_r2data         <= 64'h0;
+      idex_is_cond_branch <= 1'b0;
+      idex_branch_cond    <= 1'b0;
+      idex_is_bl          <= 1'b0;
+      idex_pc             <= 9'd0;
     end else if (advance) begin
-      idex_alu_ctrl      <= dec_alu_ctrl;
-      idex_use_imm       <= dec_use_imm;
-      idex_imm64         <= dec_imm64;
-      idex_reg_wen       <= dec_reg_wen;
-      idex_mem_wen       <= dec_mem_wen;
-      idex_is_load       <= dec_is_load;
-      idex_is_branch     <= dec_is_branch;
-      idex_is_jump       <= dec_is_jump;
-      idex_branch_target <= dec_branch_target;
-      idex_wreg          <= if_Rd;   // destination register
-      idex_r1data        <= rf_r1data;
-      idex_r2data        <= rf_r2data;
+      idex_alu_ctrl       <= dec_alu_ctrl;
+      idex_use_imm        <= dec_use_imm;
+      idex_imm64          <= dec_imm64;
+      idex_reg_wen        <= dec_reg_wen;
+      idex_mem_wen        <= dec_mem_wen;
+      idex_is_load        <= dec_is_load;
+      idex_is_branch      <= dec_is_branch;
+      idex_is_jump        <= dec_is_jump;
+      idex_branch_target  <= dec_branch_target;
+      idex_wreg           <= dec_wreg_final;  // R14 for BL, if_Rd otherwise
+      idex_r1data         <= rf_r1data;
+      idex_r2data         <= rf_r2data;
+      idex_is_cond_branch <= dec_is_cond_branch;
+      idex_branch_cond    <= dec_branch_cond;
+      idex_is_bl          <= dec_is_bl;
+      idex_pc             <= ifid_pc;         // word addr of the BL instruction
     end
   end
 
 // ===========================================================================
-// EX STAGE  ?  ALU + branch resolution
+// EX STAGE  –  ALU + branch / jump resolution
 // ===========================================================================
 
-  // Operand B mux: register value or zero-extended immediate
-  wire [63:0] ex_alu_A  = idex_r1data;
-  wire [63:0] ex_alu_B  = idex_use_imm ? idex_imm64 : idex_r2data;
+  wire [63:0] ex_alu_A = idex_r1data;
+  wire [63:0] ex_alu_B = idex_use_imm ? idex_imm64 : idex_r2data;
 
-  // 64-bit ALU
   wire [63:0] ex_alu_out;
   wire        ex_alu_ovf;
 
@@ -377,64 +444,67 @@ module pipeline (
     .overflow (ex_alu_ovf)
   );
 
-  // Branch / jump resolution
-  // All branches taken unconditionally (no condition code evaluation).
-  // Wires declared at top of module to resolve forward references.
-  assign ex_branch_taken  = (idex_is_branch | idex_is_jump) & advance;
+  // Zero flag for conditional branches
+  wire ex_zero = (ex_alu_out == 64'h0);
+
+  // Conditional branch decision
+  // BEQ: take if Rn==Rm  →  (Rn-Rm)==0  →  ex_zero=1
+  // BNE: take if Rn!=Rm  →  (Rn-Rm)!=0  →  ex_zero=0
+  wire ex_cond_taken = idex_is_cond_branch &
+                       (idex_branch_cond ? ~ex_zero : ex_zero);
+
+  // Unconditional branch: is_branch=1 and is NOT a conditional branch
+  wire ex_uncond_taken = idex_is_branch & ~idex_is_cond_branch;
+
+  assign ex_branch_taken  = (ex_uncond_taken | ex_cond_taken | idex_is_jump)
+                            & advance;
   assign ex_branch_target = idex_is_jump
-                            ? idex_r2data[8:0]    // BX: target from register Rm
-                            : idex_branch_target; // B/BL: pre-computed in ID
+                            ? idex_r2data[8:0]   // BX / JR: target from register
+                            : idex_branch_target; // B / J / BEQ / BNE
 
-  // For BL: write-back value is return address (PC+1 relative to branch instr)
-  // idex_branch_target was computed as  pc+2+offset; pc+1 = branch_target - offset - 1
-  // Simpler: we pass the ALU result for BL; for plain B reg_wen=0 so it doesn't matter.
-  // BL return address = PC of next instruction after B = idex_branch_target - offset24 - 1
-  // For simplicity, the programmer can use BL knowing R14 will not be correctly set
-  // in this implementation (full BL support would require passing PC+1 separately).
-  wire [63:0] ex_wdata   = ex_alu_out;  // both ALU result and address
-  wire [63:0] ex_store   = idex_r2data; // data to write to memory (STR)
+  // Return address for BL = word address of instruction after BL = idex_pc + 1
+  wire [63:0] ex_link_addr = {55'b0, idex_pc + 9'd1};
 
-  // EX ? EX/MEM pipeline registers
+  // Write-back data mux:
+  //   BL  → return address (idex_pc + 1) into R14
+  //   all others → ALU result
+  wire [63:0] ex_wdata = idex_is_bl ? ex_link_addr : ex_alu_out;
+  wire [63:0] ex_store = idex_r2data;
+
+  // EX → EX/MEM pipeline registers
   reg        exmem_reg_wen;
   reg        exmem_mem_wen;
   reg        exmem_is_load;
   reg [3:0]  exmem_wreg;
-  reg [63:0] exmem_alu_result;   // effective address (LDR/STR) or ALU result (arith)
-  reg [63:0] exmem_store_data;   // value to write to memory (STR)
+  reg [63:0] exmem_alu_result;
+  reg [63:0] exmem_store_data;
 
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
-      exmem_reg_wen     <= 1'b0;
-      exmem_mem_wen     <= 1'b0;
-      exmem_is_load     <= 1'b0;
-      exmem_wreg        <= 4'h0;
-      exmem_alu_result  <= 64'h0;
-      exmem_store_data  <= 64'h0;
+      exmem_reg_wen    <= 1'b0;
+      exmem_mem_wen    <= 1'b0;
+      exmem_is_load    <= 1'b0;
+      exmem_wreg       <= 4'h0;
+      exmem_alu_result <= 64'h0;
+      exmem_store_data <= 64'h0;
     end else if (advance) begin
-      exmem_reg_wen     <= idex_reg_wen;
-      exmem_mem_wen     <= idex_mem_wen;
-      exmem_is_load     <= idex_is_load;
-      exmem_wreg        <= idex_wreg;
-      exmem_alu_result  <= ex_wdata;
-      exmem_store_data  <= ex_store;
+      exmem_reg_wen    <= idex_reg_wen;
+      exmem_mem_wen    <= idex_mem_wen;
+      exmem_is_load    <= idex_is_load;
+      exmem_wreg       <= idex_wreg;
+      exmem_alu_result <= ex_wdata;
+      exmem_store_data <= ex_store;
     end
   end
 
 // ===========================================================================
-// MEM STAGE  ?  Data memory access
+// MEM STAGE  –  Data memory access
 // ===========================================================================
-// Data memory address = lower 8 bits of ALU result (byte addr / 8 for 64-bit words)
-// The 64-bit BRAM is word-addressed at 8-byte granularity.
-// alu_result[10:3] gives the 8-bit word address for byte-addressed offsets.
-// For simplicity: use alu_result[7:0] directly as the BRAM word address
-// (programmer uses word addresses in LDR/STR offsets).
-
-  wire [7:0]  mem_bram_addr   = exmem_alu_result[7:0];
+  wire [7:0]  mem_bram_addr = exmem_alu_result[7:0];
   wire [63:0] dmem_douta;
   wire [63:0] dmem_doutb;
 
   D_M_64bit_256 u_dmem (
-    // Port A: pipeline access (LDR / STR)
     .addra (mem_bram_addr),
     .clka  (clk),
     .ena   (exmem_is_load | exmem_mem_wen),
@@ -442,7 +512,6 @@ module pipeline (
     .dina  (exmem_store_data),
     .douta (dmem_douta),
 
-    // Port B: software programming interface  ? DO NOT CHANGE
     .addrb (dmem_prog_addr),
     .clkb  (clk),
     .enb   (dmem_prog_en),
@@ -452,11 +521,10 @@ module pipeline (
   );
   assign dmem_prog_rdata = dmem_doutb;
 
-  // MEM ? MEM/WB pipeline registers  (original structure kept)
   reg        mem_reg_wen;
   reg        mem_is_load;
   reg [3:0]  mem_wreg;
-  reg [63:0] mem_alu_result;   // ALU result to pass to WB (for non-load instructions)
+  reg [63:0] mem_alu_result;
 
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
@@ -473,12 +541,12 @@ module pipeline (
   end
 
 // ===========================================================================
-// MEM/WB PIPELINE REGISTERS  (original structure kept; signals extended)
+// MEM/WB PIPELINE REGISTERS
 // ===========================================================================
   reg        memwb_wreg_en;
   reg [3:0]  memwb_wreg;
-  reg [63:0] memwb_alu_result;   // ALU result (for non-load WB)
-  reg [63:0] memwb_dmem_rdata;   // Memory read data (for load WB)
+  reg [63:0] memwb_alu_result;
+  reg [63:0] memwb_dmem_rdata;
   reg        memwb_is_load;
 
   always @(posedge clk) begin
@@ -492,15 +560,14 @@ module pipeline (
       memwb_wreg_en    <= mem_reg_wen;
       memwb_wreg       <= mem_wreg;
       memwb_alu_result <= mem_alu_result;
-      memwb_dmem_rdata <= dmem_douta;    // data from BRAM (1-cycle latency matches here)
+      memwb_dmem_rdata <= dmem_douta;
       memwb_is_load    <= mem_is_load;
     end
   end
 
 // ===========================================================================
-// WB STAGE  ?  Write back to register file
+// WB STAGE  –  Write back to register file
 // ===========================================================================
-// Select write-back data: memory read data (LDR) or ALU result (arithmetic)
   assign wb_wen   = (~reset) & (~pc_reset_pulse) & advance & memwb_wreg_en;
   assign wb_waddr = memwb_wreg;
   assign wb_wdata = memwb_is_load ? memwb_dmem_rdata : memwb_alu_result;
