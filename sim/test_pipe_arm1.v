@@ -398,7 +398,7 @@ module tb_pipeline_p;
     // =========================================================================
     $display("");
     $display("== Section 1: Arithmetic and Logic ==");
-
+	//$stop;
     program_imem_word(9'd0,  f_mov(4'd1, 8'd10));
     program_imem_word(9'd1,  NOP);
     program_imem_word(9'd2,  NOP);
