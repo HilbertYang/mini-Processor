@@ -1,42 +1,42 @@
 `timescale 1ns/1ps
 // =============================================================================
-// pipeline_p.v  –  Completed 5-stage ARM-32 pipeline (no forwarding / hazard
+// pipeline_p.v  ?  Completed 5-stage ARM-32 pipeline (no forwarding / hazard
 //                  detection).  Programmer must insert NOPs between dependent
 //                  instructions.
 //
-// Pipeline stages:  IF → IF/ID → ID → ID/EX → EX → EX/MEM → MEM → MEM/WB → WB
+// Pipeline stages:  IF ? IF/ID ? ID ? ID/EX ? EX ? EX/MEM ? MEM ? MEM/WB ? WB
 // (The extra MEM and MEM/WB registers already present in the original file are
 //  kept as-is; they act as additional buffering stages.)
 //
 // ARM-32 instruction encoding used:
 // ----------------------------------
-//  [31:28]  cond   – 1110 (always; condition codes not evaluated)
-//  [27:26]  op     – 00=data-proc, 01=load/store, 10=branch
+//  [31:28]  cond   ? 1110 (always; condition codes not evaluated)
+//  [27:26]  op     ? 00=data-proc, 01=load/store, 10=branch
 //
 //  Data-processing (op=00):
-//    [25]   I      – 1=operand2 is 8-bit immediate, 0=register
-//    [24:21] opcode – 0100 ADD, 0010 SUB, 0000 AND, 1100 ORR
+//    [25]   I      ? 1=operand2 is 8-bit immediate, 0=register
+//    [24:21] opcode ? 0100 ADD, 0010 SUB, 0000 AND, 1100 ORR
 //                     1101 MOV, 0001 EOR, 1010 CMP(no WB), 1000 TST(no WB)
-//    [20]   S      – set flags (not used)
-//    [19:16] Rn    – first source register
-//    [15:12] Rd    – destination register
-//    [11:8]  rot   – rotation amount (ignored; imm treated as zero-extended)
-//    [7:0]   imm8  – 8-bit immediate (when I=1)
-//    [3:0]   Rm    – second source register (when I=0)
+//    [20]   S      ? set flags (not used)
+//    [19:16] Rn    ? first source register
+//    [15:12] Rd    ? destination register
+//    [11:8]  rot   ? rotation amount (ignored; imm treated as zero-extended)
+//    [7:0]   imm8  ? 8-bit immediate (when I=1)
+//    [3:0]   Rm    ? second source register (when I=0)
 //
 //  Load / Store (op=01):
-//    [25]   0      – immediate offset
-//    [24]   P=1    – pre-index
-//    [23]   U      – 1=add offset, 0=subtract
-//    [22]   B=0    – word
-//    [21]   W=0    – no writeback
-//    [20]   L      – 1=LDR, 0=STR
-//    [19:16] Rn   – base register
-//    [15:12] Rd   – dest (LDR) / source (STR)
-//    [11:0]  imm12 – unsigned byte offset
+//    [25]   0      ? immediate offset
+//    [24]   P=1    ? pre-index
+//    [23]   U      ? 1=add offset, 0=subtract
+//    [22]   B=0    ? word
+//    [21]   W=0    ? no writeback
+//    [20]   L      ? 1=LDR, 0=STR
+//    [19:16] Rn   ? base register
+//    [15:12] Rd   ? dest (LDR) / source (STR)
+//    [11:0]  imm12 ? unsigned byte offset
 //
 //  Branch (op=10):
-//    [27:24] 1010  – B,  1011 = BL
+//    [27:24] 1010  ? B,  1011 = BL
 //    [23:0]  signed offset (from instruction word address; pipeline adds 2)
 //
 //  BX Rm (branch-and-exchange, op=00):
@@ -57,12 +57,12 @@ module pipeline (
   input  wire        step,
   input  wire        pc_reset_pulse,
 
-  // I-mem programming interface  ← DO NOT CHANGE
+  // I-mem programming interface  ? DO NOT CHANGE
   input  wire        imem_prog_we,
   input  wire [8:0]  imem_prog_addr,
   input  wire [31:0] imem_prog_wdata,
 
-  // D-mem programming interface  ← DO NOT CHANGE
+  // D-mem programming interface  ? DO NOT CHANGE
   input  wire        dmem_prog_en,
   input  wire        dmem_prog_we,
   input  wire [7:0]  dmem_prog_addr,
@@ -74,7 +74,7 @@ module pipeline (
 );
 
 // ===========================================================================
-// PIPELINE CONTROL LOGIC   (original – untouched)
+// PIPELINE CONTROL LOGIC   (original ? untouched)
 // ===========================================================================
   reg step_d;
 
@@ -88,13 +88,13 @@ module pipeline (
   wire step_pulse = step & ~step_d;
   wire advance    = run | step_pulse;
 
-  // Forward declarations – drivers are in the EX stage section below.
+  // Forward declarations ? drivers are in the EX stage section below.
   // Declared here so every always block in IF, IF/ID, and ID/EX can see them.
   wire        ex_branch_taken;
   wire [8:0]  ex_branch_target;
 
 // ===========================================================================
-// IF STAGE   (original – untouched except branch redirect wired to pc)
+// IF STAGE   (original ? untouched except branch redirect wired to pc)
 // ===========================================================================
   reg  [8:0] pc;
   assign pc_dbg = pc;
@@ -114,7 +114,7 @@ module pipeline (
   );
   assign if_instr_dbg = imem_dout;
 
-  // PC update – branch redirect added; original increment logic preserved
+  // PC update ? branch redirect added; original increment logic preserved
   // ex_branch_taken and ex_branch_target come from EX stage (defined below)
   always @(posedge clk) begin
     if (reset) begin
@@ -147,7 +147,7 @@ module pipeline (
   end
 
 // ===========================================================================
-// ID STAGE  –  Instruction decode + register file read
+// ID STAGE  ?  Instruction decode + register file read
 // ===========================================================================
 
   // ---------------------------------------------------------------------------
@@ -187,7 +187,9 @@ module pipeline (
   localparam ALU_SHIFTL = 4'b0110;
   localparam ALU_SHIFTR = 4'b0111;
   localparam ALU_NOP    = 4'b0000;
-
+  localparam ALU_PASS_A = 4'b1000;
+  localparam ALU_PASS_B = 4'b1001;
+  
   reg  [3:0]  dec_alu_ctrl;
   reg         dec_use_imm;
   reg  [63:0] dec_imm64;
@@ -220,7 +222,7 @@ module pipeline (
       // 2'b00  Data-processing / BX
       // -----------------------------------------------------------------------
       2'b00: begin
-        // BX Rm  –  inst[27:4] == 24'h12FFF1
+        // BX Rm  ?  inst[27:4] == 24'h12FFF1
         if (ifid_instr[27:4] == 24'h12FFF1) begin
           dec_is_jump  = 1'b1;
           // jump target = lower 9 bits of Rm (resolved in EX from rf_r2data)
@@ -229,6 +231,7 @@ module pipeline (
           if (if_I) begin
             dec_use_imm = 1'b1;
             dec_imm64   = {56'b0, if_imm8};
+				//dec_alu_ctrl = ALU_PASS_B;
           end
 
           case (if_opcode)
@@ -282,12 +285,12 @@ module pipeline (
         end
       end
 
-      default: ; // NOP – all defaults
+      default: ; // NOP ? all defaults
     endcase
   end
 
   // ---------------------------------------------------------------------------
-  // WB bus (fed back from MEM/WB stage – defined further below)
+  // WB bus (fed back from MEM/WB stage ? defined further below)
   // ---------------------------------------------------------------------------
   wire        wb_wen;
   wire [3:0]  wb_waddr;
@@ -308,7 +311,7 @@ module pipeline (
   );
 
   // ---------------------------------------------------------------------------
-  // ID → ID/EX pipeline registers
+  // ID ? ID/EX pipeline registers
   // ---------------------------------------------------------------------------
   reg  [3:0]  idex_alu_ctrl;
   reg         idex_use_imm;
@@ -355,7 +358,7 @@ module pipeline (
   end
 
 // ===========================================================================
-// EX STAGE  –  ALU + branch resolution
+// EX STAGE  ?  ALU + branch resolution
 // ===========================================================================
 
   // Operand B mux: register value or zero-extended immediate
@@ -391,7 +394,7 @@ module pipeline (
   wire [63:0] ex_wdata   = ex_alu_out;  // both ALU result and address
   wire [63:0] ex_store   = idex_r2data; // data to write to memory (STR)
 
-  // EX → EX/MEM pipeline registers
+  // EX ? EX/MEM pipeline registers
   reg        exmem_reg_wen;
   reg        exmem_mem_wen;
   reg        exmem_is_load;
@@ -418,7 +421,7 @@ module pipeline (
   end
 
 // ===========================================================================
-// MEM STAGE  –  Data memory access
+// MEM STAGE  ?  Data memory access
 // ===========================================================================
 // Data memory address = lower 8 bits of ALU result (byte addr / 8 for 64-bit words)
 // The 64-bit BRAM is word-addressed at 8-byte granularity.
@@ -439,7 +442,7 @@ module pipeline (
     .dina  (exmem_store_data),
     .douta (dmem_douta),
 
-    // Port B: software programming interface  ← DO NOT CHANGE
+    // Port B: software programming interface  ? DO NOT CHANGE
     .addrb (dmem_prog_addr),
     .clkb  (clk),
     .enb   (dmem_prog_en),
@@ -449,7 +452,7 @@ module pipeline (
   );
   assign dmem_prog_rdata = dmem_doutb;
 
-  // MEM → MEM/WB pipeline registers  (original structure kept)
+  // MEM ? MEM/WB pipeline registers  (original structure kept)
   reg        mem_reg_wen;
   reg        mem_is_load;
   reg [3:0]  mem_wreg;
@@ -495,7 +498,7 @@ module pipeline (
   end
 
 // ===========================================================================
-// WB STAGE  –  Write back to register file
+// WB STAGE  ?  Write back to register file
 // ===========================================================================
 // Select write-back data: memory read data (LDR) or ALU result (arithmetic)
   assign wb_wen   = (~reset) & (~pc_reset_pulse) & advance & memwb_wreg_en;
