@@ -98,6 +98,7 @@ Load / Store (op=01):(imm-Even though here is 0, we still use offset to do calcu
 //=============================================================
 //=============================================================
 Branch (op=10):
+    branch_target = pc + 9'd2 + if_off24[8:0];
     B label
                         1110 1010(B) 0000 0000 0000 0000 0000 0000  (offset is calculated by assembler)
     BL label
@@ -130,7 +131,10 @@ This may be modify later
 //
 //  JR   Rm              Jump Register (identical to BX Rm)
 //    {4'hE, 24'h12FFF1, Rm[3:0]}
-//
+
+
+    branch_target = j_target[8:0];
+
 //  J    target9         Unconditional absolute jump to 9-bit word address
 //    inst[31:26] = 6'b111010  (op=2'b11 sub=2'b10)
 //    inst[25:0]  = zero-padded target; lower 9 bits used as new PC
@@ -139,6 +143,11 @@ This may be modify later
 //  SLT  Rd,Rn,Rm        Set Less Than (signed): Rd = (Rn < Rm) ? 1 : 0
 //    {4'hE, 3'b000, 4'b1011, 1'b0, Rn, Rd, 8'h00, Rm}
 //
+
+
+
+    branch_target  = pc + 9'd2 + beq_offset[8:0];
+
 //  BEQ  Rn,Rm,off16     Branch if Equal (Rn == Rm)
 //    inst[31:28]=4'hE  inst[27:24]=4'b1000
 //    inst[23:20]=Rn  inst[19:16]=Rm  inst[15:0]=off16
