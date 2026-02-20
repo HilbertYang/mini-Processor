@@ -3,7 +3,7 @@ import os
 
 def open_file(arm):
     try:
-        with open(arm, 'r') as f:           
+        with open(arm, 'r') as f:                       
             contents = [[line.strip()] for line in f ] 
     except FileNotFoundError:
         raise FileNotFoundError(f"Error: File '{arm}' not found.")
