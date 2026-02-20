@@ -125,10 +125,15 @@ This may be modify later
 //  SLL  Rd,Rn,Rm        Shift Left  by Rm[5:0]
 //    {4'hE, 3'b000, 4'b0110, 1'b0, Rn, Rd, 8'h00, Rm}
 //    (I=0 selects variable-shift; I=1 preserves old shift-by-1 behaviour)
+
+    SLL  Rd,Rn,imm       Shift Left  
+      {4'hE, 3'b001, 4'b0110, 1'b0, Rn, Rd, 8'h00, imm8}
 //
 //  SRL  Rd,Rn,Rm        Shift Right by Rm[5:0]
 //    {4'hE, 3'b000, 4'b0111, 1'b0, Rn, Rd, 8'h00, Rm}
-//
+
+    SLL  Rd,Rn,imm       Shift Left  
+      {4'hE, 3'b001, 4'b0110, 1'b0, Rn, Rd, 8'h00, imm8}
 //  JR   Rm              Jump Register (identical to BX Rm)
 //    {4'hE, 24'h12FFF1, Rm[3:0]}
 

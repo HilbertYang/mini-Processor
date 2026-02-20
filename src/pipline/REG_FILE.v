@@ -1,3 +1,8 @@
+//  =============================================================================
+//  REG_FILE.v  –  Register File for the ARM-32 pipeline
+//  Modified by:  Haobo Yang at 02/19/2026
+//  Add IFRF (Immediate Forwarding Register File) logic to support forwarding of write data to read ports in the same cycle.
+//  =============================================================================
 module REG_FILE #(
     parameter data_width = 64, 
     parameter addr_width = 4 
@@ -19,7 +24,12 @@ module REG_FILE #(
 
     // Asynchronous Read: Ternary operator returns 0 if address is 0
     // This is "Hardwiring" the zero at the output mux level
-    assign r0data = (r0addr == 0) ? {data_width{1'b0}} : regFile[r0addr];
-    assign r1data = (r1addr == 0) ? {data_width{1'b0}} : regFile[r1addr];
+    // Add IFRF here----------
+    assign r0data = (r0addr == 0) ? {data_width{1'b0}} :
+                    (wena && (waddr == r0addr) && (waddr != 0)) ? wdata : 
+                        regFile[r0addr];
 
+    assign r1data = (r1addr == 0) ? {data_width{1'b0}} :
+                    (wena && (waddr == r1addr) && (waddr != 0)) ? wdata : 
+                    regFile[r1addr];
 endmodule

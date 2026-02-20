@@ -75,11 +75,21 @@ module ALU #(parameter data_width = 32) (
       ALU_SHIFTLV: Z = A << shamt;
       ALU_SHIFTRV: Z = A >> shamt;
 
+      ALU_ASR    : Z = $signed(A) >>> 1;      // arithmetic right shift (ASR)
+      ALU_ASRV   : Z = $signed(A) >>> shamt;  // arithmetic right shift var (ASRV)
 
       ALU_SLT    : Z = ($signed(A) < $signed(B))
                        ? {{(data_width-1){1'b0}}, 1'b1}
                        : {data_width{1'b0}};
-      default    : Z = {data_width{1'b0}};
+
+      ALU_SLTU   : Z = (A < B)
+                       ? {{(data_width-1){1'b0}}, 1'b1}
+                       : {data_width{1'b0}};
+
+      default    : begin
+        Z        = {data_width{1'b0}};
+        overflow = 1'b0;
+      end
     endcase
   end
 
