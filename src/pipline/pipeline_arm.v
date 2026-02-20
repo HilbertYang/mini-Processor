@@ -1,592 +1,781 @@
 `timescale 1ns/1ps
 // =============================================================================
-// pipeline_p.v  ?  5-stage ARM-32 pipeline, extended instruction set.
+// tb_pipeline_p_ext.v  ?  Testbench for extended pipeline_p.v
 //
-// Pipeline stages:  IF ? IF/ID ? ID ? ID/EX ? EX ? EX/MEM ? MEM ? MEM/WB ? WB
-// No forwarding / hazard detection ? programmer inserts NOPs.
+// Tests all new instructions:
+//   T0  MOV / ADD / SUB  regression
+//   T1  SLL  Rd,Rn,Rm    shift left  by Rm[5:0]
+//   T2  SRL  Rd,Rn,Rm    shift right by Rm[5:0]
+//   T3  SLT  Rd,Rn,Rm    set less than (signed)
+//   T4  BEQ  Rn,Rm,off   branch if equal    (taken and not-taken)
+//   T5  BNE  Rn,Rm,off   branch if not-equal (taken and not-taken)
+//   T6  J    target       absolute jump
+//   T7  JR   Rm           jump register (= BX Rm)
+//   T8  BL + JR           branch-and-link full call/return
 //
-// ??? Original instructions (unchanged) ???????????????????????????????????????
-//  NOP  32'hE000_0000   (AND R0,R0,R0, result discarded)
-//  MOV  Rd,#imm8        op=00 I=1 opcode=1101
-//  ADD  Rd,Rn,Rm/imm8   op=00 opcode=0100
-//  SUB  Rd,Rn,Rm/imm8   op=00 opcode=0010
-//  AND  Rd,Rn,Rm        op=00 opcode=0000
-//  ORR  Rd,Rn,Rm        op=00 opcode=1100
-//  EOR  Rd,Rn,Rm        op=00 opcode=0001
-//  LDR  Rd,[Rn,#off12]  op=01 L=1
-//  STR  Rd,[Rn,#off12]  op=01 L=0
-//  B    off24            op=10 [27:25]=101 bit24=0  (unconditional branch)
-//  BL   off24            op=10 [27:25]=101 bit24=1  (branch-and-link)
-//    Jumps to target; saves return address (BL_word+1) into R14.
-//    Encoding: {4'hE, 4'b1011, off24}
-//    Return with: JR R14  (= BX R14)
-//  BX   Rm              op=00 [27:4]=24'h12FFF1  (jump register = JR)
+// Rule enforced throughout:
+//   4 NOPs are inserted immediately after every J, JR, BEQ, BNE instruction.
+//   This gives the pipeline time to redirect before any fall-through
+//   instruction reaches ID, eliminating spurious executions.
 //
-// ??? New instructions ?????????????????????????????????????????????????????????
+// Instruction encodings:
+//   NOP  32'hE000_0000
+//   MOV  Rd,#imm8     {4'hE,3'b001,4'b1101,1'b0,4'h0,Rd,4'h0,imm8}
+//   ADD  Rd,Rn,Rm     {4'hE,3'b000,4'b0100,1'b0,Rn,Rd,8'h00,Rm}
+//   ADD  Rd,Rn,#imm8  {4'hE,3'b001,4'b0100,1'b0,Rn,Rd,4'h0,imm8}
+//   SUB  Rd,Rn,Rm     {4'hE,3'b000,4'b0010,1'b0,Rn,Rd,8'h00,Rm}
+//   SLL  Rd,Rn,Rm     {4'hE,3'b000,4'b0110,1'b0,Rn,Rd,8'h00,Rm}
+//   SRL  Rd,Rn,Rm     {4'hE,3'b000,4'b0111,1'b0,Rn,Rd,8'h00,Rm}
+//   SLT  Rd,Rn,Rm     {4'hE,3'b000,4'b1011,1'b0,Rn,Rd,8'h00,Rm}
+//   BEQ  Rn,Rm,off16  {4'hE,4'b1000,Rn,Rm,off16}
+//   BNE  Rn,Rm,off16  {4'hE,4'b1001,Rn,Rm,off16}
+//   J    target9      {6'b111010,17'b0,target9}
+//   JR   Rm           {4'hE,24'h12FFF1,Rm}
+//   BL   off24        {4'hE,4'b1011,off24}
 //
-//  SLL  Rd,Rn,Rm        Shift Left  by Rm[5:0]
-//    {4'hE, 3'b000, 4'b0110, 1'b0, Rn, Rd, 8'h00, Rm}
-//    (I=0 selects variable-shift; I=1 preserves old shift-by-1 behaviour)
+//   off16/off24 = target_word_addr - branch_word_addr - 2
 //
-//  SRL  Rd,Rn,Rm        Shift Right by Rm[5:0]
-//    {4'hE, 3'b000, 4'b0111, 1'b0, Rn, Rd, 8'h00, Rm}
-//
-//  JR   Rm              Jump Register (identical to BX Rm)
-//    {4'hE, 24'h12FFF1, Rm[3:0]}
-//
-//  J    target9         Unconditional absolute jump to 9-bit word address
-//    inst[31:26] = 6'b111010  (op=2'b11 sub=2'b10)
-//    inst[25:0]  = zero-padded target; lower 9 bits used as new PC
-//    {6'b111010, 17'b0, target9[8:0]}
-//
-//  SLT  Rd,Rn,Rm        Set Less Than (signed): Rd = (Rn < Rm) ? 1 : 0
-//    {4'hE, 3'b000, 4'b1011, 1'b0, Rn, Rd, 8'h00, Rm}
-//
-//  BEQ  Rn,Rm,off16     Branch if Equal (Rn == Rm)
-//    inst[31:28]=4'hE  inst[27:24]=4'b1000
-//    inst[23:20]=Rn  inst[19:16]=Rm  inst[15:0]=off16
-//    branch_target = ifid_pc + 2 + sign_extend(off16)
-//    {4'hE, 4'b1000, Rn, Rm, 16'(off16)}
-//
-//  BNE  Rn,Rm,off16     Branch if Not Equal (Rn != Rm)
-//    inst[27:24]=4'b1001
-//    {4'hE, 4'b1001, Rn, Rm, 16'(off16)}
-//
-// ??? Register file:   16 × 64-bit  (R0?R15) ??????????????????????????????????
-// ??? ALU:             64-bit ??????????????????????????????????????????????????
-// ??? Data memory:     256 × 64-bit  (D_M_64bit_256) ??????????????????????????
-// ??? Instruction mem: 512 × 32-bit  (I_M_32bit_512depth) ?????????????????????
+// Pipeline depth: 7 NOPs between dependent instructions (safe margin).
 // =============================================================================
-module pipeline (
-  input  wire        clk,
-  input  wire        reset,
 
-  input  wire        run,
-  input  wire        step,
-  input  wire        pc_reset_pulse,
+module tb_pipeline_p_ext;
 
-  // I-mem programming interface  ? DO NOT CHANGE
-  input  wire        imem_prog_we,
-  input  wire [8:0]  imem_prog_addr,
-  input  wire [31:0] imem_prog_wdata,
+  // ??? DUT ports ?????????????????????????????????????????????????????????????
+  reg         clk;
+  reg         reset;
+  reg         run;
+  reg         step;
+  reg         pc_reset_pulse;
 
-  // D-mem programming interface  ? DO NOT CHANGE
-  input  wire        dmem_prog_en,
-  input  wire        dmem_prog_we,
-  input  wire [7:0]  dmem_prog_addr,
-  input  wire [63:0] dmem_prog_wdata,
-  output wire [63:0] dmem_prog_rdata,
+  reg         imem_prog_we;
+  reg  [8:0]  imem_prog_addr;
+  reg  [31:0] imem_prog_wdata;
 
-  output wire [8:0]  pc_dbg,
-  output wire [31:0] if_instr_dbg
-);
+  reg         dmem_prog_en;
+  reg         dmem_prog_we;
+  reg  [7:0]  dmem_prog_addr;
+  reg  [63:0] dmem_prog_wdata;
+  wire [63:0] dmem_prog_rdata;
 
-// ===========================================================================
-// PIPELINE CONTROL
-// ===========================================================================
-  reg step_d;
-  always @(posedge clk) begin
-    if (reset || pc_reset_pulse) step_d <= 1'b0;
-    else                         step_d <= step;
-  end
+  wire [8:0]  pc_dbg;
+  wire [31:0] if_instr_dbg;
 
-  wire step_pulse = step & ~step_d;
-  wire advance    = run | step_pulse;
+  // ??? Counters ??????????????????????????????????????????????????????????????
+  integer pass_count;
+  integer fail_count;
 
-  // Forward declarations ? driven in EX stage below.
-  wire        ex_branch_taken;
-  wire [8:0]  ex_branch_target;
-
-// ===========================================================================
-// IF STAGE
-// ===========================================================================
-  reg [8:0] pc;
-  assign pc_dbg = pc;
-
-  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc;
-  wire [31:0] imem_dout;
-
-  I_M_32bit_512depth u_imem (
-    .addr (imem_addr_mux),
-    .clk  (clk),
-    .din  (imem_prog_wdata),
-    .dout (imem_dout),
-    .en   (1'b1),
-    .we   (imem_prog_we)
-  );
-  assign if_instr_dbg = imem_dout;
-
-  always @(posedge clk) begin
-    if      (reset || pc_reset_pulse) pc <= 9'd0;
-    else if (ex_branch_taken)         pc <= ex_branch_target;
-    else if (advance)                 pc <= pc + 9'd1;
-  end
-
-// ===========================================================================
-// IF/ID PIPELINE REGISTER
-// ===========================================================================
-  reg [31:0] ifid_instr;
-  //wire [31:0] ifid_instr;
-  reg [8:0]  ifid_pc;
-  reg [8:0]  pc_delay;
-  
-  always @(posedge clk) begin
-    if (reset || pc_reset_pulse) begin
-      pc_delay    <= 9'd0;
-    end else if (advance) begin
-      pc_delay    <= pc;
-    end
-  end
-	 
-	 
-	//assign ifid_instr = (reset || pc_reset_pulse) ? 32'h0 : imem_dout;
-	
-	always @(posedge clk) begin
-	//if (reset || pc_reset_pulse || ex_branch_taken) begin
-    if (reset || pc_reset_pulse) begin
-      ifid_instr <= 32'h0;
-      ifid_pc    <= 9'd0;
-    end else if (advance) begin
-      ifid_instr <= imem_dout;
-      //ifid_pc    <= pc;
-		ifid_pc <= pc_delay;
-    end
-  end
-  
-
-// ===========================================================================
-// ID STAGE  ?  Instruction decode + register-file read
-// ===========================================================================
-
-  // ---------------------------------------------------------------------------
-  // ARM-32 field extraction
-  // ---------------------------------------------------------------------------
-  wire [1:0]  if_op     = ifid_instr[27:26];
-  wire        if_I      = ifid_instr[25];
-  wire [3:0]  if_opcode = ifid_instr[24:21];
-  wire        if_L      = ifid_instr[20];
-  wire [3:0]  if_Rn     = ifid_instr[19:16];
-  wire [3:0]  if_Rd     = ifid_instr[15:12];
-  wire [3:0]  if_Rm     = ifid_instr[3:0];
-  wire [7:0]  if_imm8   = ifid_instr[7:0];
-  wire [23:0] if_off24  = ifid_instr[23:0];
-  wire        if_U      = ifid_instr[23];
-  wire [11:0] if_imm12  = ifid_instr[11:0];
-
-  // BEQ/BNE field extraction (custom encoding ? lives in inst[27:24]=1000/1001)
-  wire [3:0]  if_beq_type = ifid_instr[27:24];  // 4'b1000=BEQ, 4'b1001=BNE
-  wire [3:0]  if_beq_Rn   = ifid_instr[23:20];
-  wire [3:0]  if_beq_Rm   = ifid_instr[19:16];
-  wire [15:0] if_beq_off  = ifid_instr[15:0];
-
-  // J field extraction (inst[31:26]=6'b111010): inst[25:0]=target26
-  wire [25:0] if_j_target = ifid_instr[25:0];
-
-  // ---------------------------------------------------------------------------
-  // ALU control constants  (must match ALU.v)
-  // ---------------------------------------------------------------------------
-  localparam ALU_NOP     = 4'b0000;
-  localparam ALU_ADD     = 4'b0001;
-  localparam ALU_SUB     = 4'b0010;
-  localparam ALU_AND     = 4'b0011;
-  localparam ALU_OR      = 4'b0100;
-  localparam ALU_XNOR    = 4'b0101;
-  localparam ALU_SHIFTL  = 4'b0110;   // shift left  by 1 (immediate)
-  localparam ALU_SHIFTR  = 4'b0111;   // shift right by 1 (immediate)
-  localparam ALU_SHIFTLV = 4'b1000;   // shift left  by B[5:0] (variable) ? NEW
-  localparam ALU_SHIFTRV = 4'b1001;   // shift right by B[5:0] (variable) ? NEW
-  localparam ALU_SLT     = 4'b1010;   // set less than (signed)            ? NEW
-
-  // ---------------------------------------------------------------------------
-  // Detect BEQ/BNE before normal op decode
-  // BEQ: cond=E, [27:24]=4'b1000    BNE: cond=E, [27:24]=4'b1001
-  // ---------------------------------------------------------------------------
-  wire is_beqbne = (ifid_instr[31:28] == 4'hE) &&
-                   ((if_beq_type == 4'b1000) || (if_beq_type == 4'b1001));
-
-  // Detect J instruction: inst[31:26]=6'b111010
-  wire is_j = (ifid_instr[31:26] == 6'b111010);
-
-  // ---------------------------------------------------------------------------
-  // Register-file read port addressing
-  //   BEQ/BNE: port0=Rn, port1=Rm  (both comparison operands)
-  //   STR:     port0=Rn(base), port1=Rd(data to store)
-  //   others:  port0=Rn, port1=Rm
-  // ---------------------------------------------------------------------------
-  wire [3:0] id_reg1 = is_beqbne ? if_beq_Rn : if_Rn;
-  wire [3:0] id_reg2 = is_beqbne ? if_beq_Rm :
-                       (if_op == 2'b01 && !if_L) ? if_Rd : if_Rm;
-
-  wire [63:0] rf_r1data;
-  wire [63:0] rf_r2data;
-
-  // ---------------------------------------------------------------------------
-  // Combinational decoder
-  // ---------------------------------------------------------------------------
-  reg [3:0]  dec_alu_ctrl;
-  reg        dec_use_imm;
-  reg [63:0] dec_imm64;
-  reg        dec_reg_wen;
-  reg        dec_mem_wen;
-  reg        dec_is_load;
-  reg        dec_is_branch;
-  reg        dec_is_jump;
-  reg [8:0]  dec_branch_target;
-  reg        dec_is_cond_branch; // 1 = BEQ or BNE
-  reg        dec_branch_cond;    // 0 = BEQ, 1 = BNE
-  reg        dec_is_bl;          // 1 = BL: write return addr (BL_word+1) to R14
-
-  always @(*) begin
-    // Safe defaults
-    dec_alu_ctrl      = ALU_NOP;
-    dec_use_imm       = 1'b0;
-    dec_imm64         = 64'b0;
-    dec_reg_wen       = 1'b0;
-    dec_mem_wen       = 1'b0;
-    dec_is_load       = 1'b0;
-    dec_is_branch     = 1'b0;
-    dec_is_jump       = 1'b0;
-    dec_branch_target = 9'd0;
-    dec_is_cond_branch= 1'b0;
-    dec_branch_cond   = 1'b0;
-    dec_is_bl         = 1'b0;
-
-    // Standard B/BL branch target (may be overridden below)
-    // off24 is a signed 24-bit word offset.  Cast it to signed so Verilog
-    // sign-extends during the 9-bit addition; the result is automatically
-    // truncated to 9 bits by the assignment target width.
-    dec_branch_target = ifid_pc + 9'd2 + if_off24[8:0];
-	 //dec_branch_target = ifid_pc + 9'd2 + imem_dout[8:0];
-
-    // ?? Priority 1: BEQ / BNE ????????????????????????????????????????????????
-    if (is_beqbne) begin
-      // Use ALU to compute Rn - Rm; branch if zero (BEQ) or nonzero (BNE)
-      dec_alu_ctrl       = ALU_SUB;
-      dec_use_imm        = 1'b0;
-      dec_reg_wen        = 1'b0;
-      dec_is_branch      = 1'b1;
-      dec_is_cond_branch = 1'b1;
-      dec_branch_cond    = (if_beq_type == 4'b1001); // 1=BNE, 0=BEQ
-      // Branch target: ifid_pc + 2 + sign_extend(off16), truncated to 9 bits
-      dec_branch_target  = ifid_pc + 9'd2 + if_beq_off[8:0];
-
-    // ?? Priority 2: J (absolute jump) ????????????????????????????????????????
-    end else if (is_j) begin
-      dec_is_branch     = 1'b1;
-      dec_branch_target = if_j_target[8:0];  // lower 9 bits = word address
-      dec_reg_wen       = 1'b0;
-
-    // ?? Priority 3: Normal ARM-32 instructions ????????????????????????????????
-    end else begin
-      case (if_op)
-
-        // ?? op=00: Data-processing, BX, SLT, SLL, SRL ??????????????????????
-        2'b00: begin
-          // BX Rm  (= JR Rm): inst[27:4] = 24'h12FFF1
-          if (ifid_instr[27:4] == 24'h12FFF1) begin
-            dec_is_jump = 1'b1;
-            // target = rf_r2data[8:0], resolved in EX
-
-          end else begin
-            // Immediate operand (I=1): 8-bit zero-extended
-            if (if_I) begin
-              dec_use_imm = 1'b1;
-              dec_imm64   = {56'b0, if_imm8};
-            end
-
-            case (if_opcode)
-              4'b0100: begin dec_alu_ctrl = ALU_ADD;   dec_reg_wen = 1'b1; end // ADD
-              4'b0010: begin dec_alu_ctrl = ALU_SUB;   dec_reg_wen = 1'b1; end // SUB
-              4'b0000: begin dec_alu_ctrl = ALU_AND;   dec_reg_wen = 1'b1; end // AND
-              4'b1100: begin dec_alu_ctrl = ALU_OR;    dec_reg_wen = 1'b1; end // ORR
-              4'b0001: begin dec_alu_ctrl = ALU_XNOR;  dec_reg_wen = 1'b1; end // EOR
-              4'b1101: begin dec_alu_ctrl = ALU_ADD;   dec_reg_wen = 1'b1; end // MOV
-              4'b1111: begin dec_alu_ctrl = ALU_XNOR;  dec_reg_wen = 1'b1; end // MVN
-              4'b1010: begin dec_alu_ctrl = ALU_SUB;   dec_reg_wen = 1'b0; end // CMP
-              4'b1000: begin dec_alu_ctrl = ALU_AND;   dec_reg_wen = 1'b0; end // TST
-              4'b1001: begin dec_alu_ctrl = ALU_XNOR;  dec_reg_wen = 1'b0; end // TEQ
-
-              // SLL Rd,Rn,Rm: variable left shift (I=0) / shift-by-1 (I=1)
-              4'b0110: begin
-                dec_reg_wen  = 1'b1;
-                dec_alu_ctrl = if_I ? ALU_SHIFTL : ALU_SHIFTLV;
-              end
-
-              // SRL Rd,Rn,Rm: variable right shift (I=0) / shift-by-1 (I=1)
-              4'b0111: begin
-                dec_reg_wen  = 1'b1;
-                dec_alu_ctrl = if_I ? ALU_SHIFTR : ALU_SHIFTRV;
-              end
-
-              // SLT Rd,Rn,Rm  (opcode=1011, unused in ARM)
-              4'b1011: begin dec_alu_ctrl = ALU_SLT;   dec_reg_wen = 1'b1; end
-
-              4'b0101: begin dec_alu_ctrl = ALU_ADD;   dec_reg_wen = 1'b1; end // ADC?ADD
-              4'b0011: begin dec_alu_ctrl = ALU_SUB;   dec_reg_wen = 1'b1; end // RSB
-              default: begin dec_alu_ctrl = ALU_NOP;   dec_reg_wen = 1'b0; end
-            endcase
-          end
-        end // op=00
-
-        // ?? op=01: Load / Store ?????????????????????????????????????????????
-        2'b01: begin
-          dec_alu_ctrl = if_U ? ALU_ADD : ALU_SUB;
-          dec_use_imm  = 1'b1;
-          dec_imm64    = {52'b0, if_imm12};
-
-          if (if_L) begin              // LDR
-            dec_is_load = 1'b1;
-            dec_reg_wen = 1'b1;
-          end else begin               // STR
-            dec_mem_wen = 1'b1;
-          end
-        end // op=01
-
-        // ?? op=10: Branch B / BL ????????????????????????????????????????????
-        2'b10: begin
-          if (ifid_instr[27:25] == 3'b101) begin
-            dec_is_branch = 1'b1;
-            if (ifid_instr[24]) begin   // bit24=1 ? BL
-              dec_is_bl   = 1'b1;
-              dec_reg_wen = 1'b1;       // write return address to R14
-              // dec_wreg forced to R14 outside the case (see below)
-            end
-            // plain B: dec_reg_wen stays 0, dec_is_bl stays 0
-          end
-        end // op=10
-
-        default: ; // NOP
-      endcase
-    end
-  end // always decoder
-
-  // For BL the destination register is always R14 (link register),
-  // regardless of what the instruction's Rd field says.
-  wire [3:0] dec_wreg_final = dec_is_bl ? 4'd14 : if_Rd;
-
-  // ---------------------------------------------------------------------------
-  // WB bus  (driven from MEM/WB stage; declared here for forward reference)
-  // ---------------------------------------------------------------------------
-  wire        wb_wen;
-  wire [3:0]  wb_waddr;
-  wire [63:0] wb_wdata;
-
-  // ---------------------------------------------------------------------------
-  // Register file
-  // ---------------------------------------------------------------------------
-  REG_FILE #(.data_width(64), .addr_width(4)) u_rf (
-    .clk    (clk),
-    .wena   (wb_wen),
-    .r0addr (id_reg1),
-    .r1addr (id_reg2),
-    .waddr  (wb_waddr),
-    .wdata  (wb_wdata),
-    .r0data (rf_r1data),
-    .r1data (rf_r2data)
+  // ??? DUT ???????????????????????????????????????????????????????????????????
+  pipeline dut (
+    .clk            (clk),
+    .reset          (reset),
+    .run            (run),
+    .step           (step),
+    .pc_reset_pulse (pc_reset_pulse),
+    .imem_prog_we   (imem_prog_we),
+    .imem_prog_addr (imem_prog_addr),
+    .imem_prog_wdata(imem_prog_wdata),
+    .dmem_prog_en   (dmem_prog_en),
+    .dmem_prog_we   (dmem_prog_we),
+    .dmem_prog_addr (dmem_prog_addr),
+    .dmem_prog_wdata(dmem_prog_wdata),
+    .dmem_prog_rdata(dmem_prog_rdata),
+    .pc_dbg         (pc_dbg),
+    .if_instr_dbg   (if_instr_dbg)
   );
 
-  // ---------------------------------------------------------------------------
-  // ID ? ID/EX pipeline registers
-  // ---------------------------------------------------------------------------
-  reg [3:0]  idex_alu_ctrl;
-  reg        idex_use_imm;
-  reg [63:0] idex_imm64;
-  reg        idex_reg_wen;
-  reg        idex_mem_wen;
-  reg        idex_is_load;
-  reg        idex_is_branch;
-  reg        idex_is_jump;
-  reg [8:0]  idex_branch_target;
-  reg [3:0]  idex_wreg;
-  reg [63:0] idex_r1data;
-  reg [63:0] idex_r2data;
-  reg        idex_is_cond_branch; // 1 = BEQ or BNE (condition checked in EX)
-  reg        idex_branch_cond;    // 0 = BEQ (take if zero), 1 = BNE (take if nonzero)
-  reg        idex_is_bl;          // 1 = BL: EX writes return address instead of ALU result
-  reg [8:0]  idex_pc;             // word address of the BL instruction itself
+  `define RF dut.u_rf.regFile
 
-  always @(posedge clk) begin
-    if (reset || pc_reset_pulse || ex_branch_taken) begin
-      idex_alu_ctrl       <= ALU_NOP;
-      idex_use_imm        <= 1'b0;
-      idex_imm64          <= 64'b0;
-      idex_reg_wen        <= 1'b0;
-      idex_mem_wen        <= 1'b0;
-      idex_is_load        <= 1'b0;
-      idex_is_branch      <= 1'b0;
-      idex_is_jump        <= 1'b0;
-      idex_branch_target  <= 9'd0;
-      idex_wreg           <= 4'h0;
-      idex_r1data         <= 64'h0;
-      idex_r2data         <= 64'h0;
-      idex_is_cond_branch <= 1'b0;
-      idex_branch_cond    <= 1'b0;
-      idex_is_bl          <= 1'b0;
-      idex_pc             <= 9'd0;
-    end else if (advance) begin
-      idex_alu_ctrl       <= dec_alu_ctrl;
-      idex_use_imm        <= dec_use_imm;
-      idex_imm64          <= dec_imm64;
-      idex_reg_wen        <= dec_reg_wen;
-      idex_mem_wen        <= dec_mem_wen;
-      idex_is_load        <= dec_is_load;
-      idex_is_branch      <= dec_is_branch;
-      idex_is_jump        <= dec_is_jump;
-      idex_branch_target  <= dec_branch_target;
-      idex_wreg           <= dec_wreg_final;  // R14 for BL, if_Rd otherwise
-      idex_r1data         <= rf_r1data;
-      idex_r2data         <= rf_r2data;
-      idex_is_cond_branch <= dec_is_cond_branch;
-      idex_branch_cond    <= dec_branch_cond;
-      idex_is_bl          <= dec_is_bl;
-      idex_pc             <= ifid_pc;         // word addr of the BL instruction
+  // ??? Clock ?????????????????????????????????????????????????????????????????
+  localparam CLK_PERIOD = 10;
+  initial clk = 1'b0;
+  always #(CLK_PERIOD/2) clk = ~clk;
+
+  // ===========================================================================
+  // Encoding functions
+  // ===========================================================================
+  localparam NOP = 32'hE000_0000;
+
+  function [31:0] f_mov;
+    input [3:0] Rd; input [7:0] imm8;
+    f_mov = {4'hE, 3'b001, 4'b1101, 1'b0, 4'h0, Rd, 4'h0, imm8};
+  endfunction
+
+  function [31:0] f_add_r;
+    input [3:0] Rd, Rn, Rm;
+    f_add_r = {4'hE, 3'b000, 4'b0100, 1'b0, Rn, Rd, 8'h00, Rm};
+  endfunction
+
+  function [31:0] f_add_i;
+    input [3:0] Rd, Rn; input [7:0] imm8;
+    f_add_i = {4'hE, 3'b001, 4'b0100, 1'b0, Rn, Rd, 4'h0, imm8};
+  endfunction
+
+  function [31:0] f_sub_r;
+    input [3:0] Rd, Rn, Rm;
+    f_sub_r = {4'hE, 3'b000, 4'b0010, 1'b0, Rn, Rd, 8'h00, Rm};
+  endfunction
+
+  function [31:0] f_sll;
+    input [3:0] Rd, Rn, Rm;
+    f_sll = {4'hE, 3'b000, 4'b0110, 1'b0, Rn, Rd, 8'h00, Rm};
+  endfunction
+
+  function [31:0] f_srl;
+    input [3:0] Rd, Rn, Rm;
+    f_srl = {4'hE, 3'b000, 4'b0111, 1'b0, Rn, Rd, 8'h00, Rm};
+  endfunction
+
+  function [31:0] f_slt;
+    input [3:0] Rd, Rn, Rm;
+    f_slt = {4'hE, 3'b000, 4'b1011, 1'b0, Rn, Rd, 8'h00, Rm};
+  endfunction
+
+  function [31:0] f_beq;          // off16 = target - beq_addr - 2
+    input [3:0] Rn, Rm; input [15:0] off16;
+    f_beq = {4'hE, 4'b1000, Rn, Rm, off16};
+  endfunction
+
+  function [31:0] f_bne;          // off16 = target - bne_addr - 2
+    input [3:0] Rn, Rm; input [15:0] off16;
+    f_bne = {4'hE, 4'b1001, Rn, Rm, off16};
+  endfunction
+
+  function [31:0] f_j;            // target9 = absolute word address
+    input [8:0] target;
+    //f_j = {6'b111010, 17'b0, target};
+	 f_j = {6'b111011, 17'b0, target};
+  endfunction
+
+  function [31:0] f_jr;
+    input [3:0] Rm;
+    f_jr = {4'hE, 24'h12FFF1, Rm};
+  endfunction
+
+  function [31:0] f_bl;           // off24 = target - bl_addr - 2
+    input [23:0] off24;
+    f_bl = {4'hE, 4'b1011, off24};
+  endfunction
+
+  function [31:0] f_str;
+    input [3:0] Rd, Rn; input [11:0] off12;
+    f_str = {4'hE, 8'b0101_1000, Rn, Rd, off12};
+  endfunction
+
+  function [31:0] f_ldr;
+    input [3:0] Rd, Rn; input [11:0] off12;
+    f_ldr = {4'hE, 8'b0101_1001, Rn, Rd, off12};
+  endfunction
+
+  // ===========================================================================
+  // Tasks
+  // ===========================================================================
+  task program_imem_word;
+    input [8:0]  addr;
+    input [31:0] data;
+    begin
+      run = 1'b0; step = 1'b0;
+      imem_prog_addr  = addr;
+      imem_prog_wdata = data;
+      imem_prog_we    = 1'b1;
+      @(posedge clk); #1;
+      imem_prog_we = 1'b0;
     end
+  endtask
+
+  task program_dmem_word;
+    input [7:0]  addr;
+    input [63:0] data;
+    begin
+      run = 1'b0; step = 1'b0;
+      dmem_prog_addr  = addr;
+      dmem_prog_wdata = data;
+      dmem_prog_en    = 1'b1;
+      dmem_prog_we    = 1'b1;
+      @(posedge clk); #1;
+      dmem_prog_we = 1'b0;
+      dmem_prog_en = 1'b0;
+    end
+  endtask
+
+  task pulse_pc_reset;
+    begin
+      pc_reset_pulse = 1'b1;
+      @(posedge clk); #1;
+      pc_reset_pulse = 1'b0;
+      @(posedge clk); #1;
+    end
+  endtask
+
+  task do_reset;
+    begin
+      reset = 1'b1;
+      run = 1'b0; step = 1'b0; pc_reset_pulse = 1'b0;
+      imem_prog_we = 1'b0; imem_prog_addr = 9'h0; imem_prog_wdata = 32'h0;
+      dmem_prog_en = 1'b0; dmem_prog_we = 1'b0;
+      dmem_prog_addr = 8'h0; dmem_prog_wdata = 64'h0;
+      repeat (4) @(posedge clk); #1;
+      reset = 1'b0;
+      @(posedge clk); #1;
+    end
+  endtask
+
+  task run_cycles;
+    input integer n;
+    begin
+      run = 1'b1;
+      repeat (n) @(posedge clk);
+      #1;
+      run = 1'b0;
+    end
+  endtask
+
+  integer addr;
+
+  task drain_and_run;
+    input integer extra_cycles;
+    integer i;
+    begin
+      for (i = 0; i < 15; i = i + 1) begin
+        program_imem_word(addr[8:0], NOP);
+        addr = addr + 1;
+      end
+      pulse_pc_reset();
+      run_cycles(addr + extra_cycles);
+    end
+  endtask
+
+  // ===========================================================================
+  // WB monitor
+  // ===========================================================================
+  always @(posedge clk) begin
+    if (!reset && dut.wb_wen)
+      $display("[%0t] WB  R%0d <- 0x%016h  (pc=%0d)", $time,
+               dut.wb_waddr, dut.wb_wdata, pc_dbg);
   end
 
-// ===========================================================================
-// EX STAGE  ?  ALU + branch / jump resolution
-// ===========================================================================
-
-  wire [63:0] ex_alu_A = idex_r1data;
-  wire [63:0] ex_alu_B = idex_use_imm ? idex_imm64 : idex_r2data;
-
-  wire [63:0] ex_alu_out;
-  wire        ex_alu_ovf;
-
-  ALU #(.data_width(64)) u_alu (
-    .A        (ex_alu_A),
-    .B        (ex_alu_B),
-    .aluctrl  (idex_alu_ctrl),
-    .Z        (ex_alu_out),
-    .overflow (ex_alu_ovf)
-  );
-
-  // Zero flag for conditional branches
-  wire ex_zero = (ex_alu_out == 64'h0);
-
-  // Conditional branch decision
-  // BEQ: take if Rn==Rm  ?  (Rn-Rm)==0  ?  ex_zero=1
-  // BNE: take if Rn!=Rm  ?  (Rn-Rm)!=0  ?  ex_zero=0
-  wire ex_cond_taken = idex_is_cond_branch &
-                       (idex_branch_cond ? ~ex_zero : ex_zero);
-
-  // Unconditional branch: is_branch=1 and is NOT a conditional branch
-  wire ex_uncond_taken = idex_is_branch & ~idex_is_cond_branch;
-
-  assign ex_branch_taken  = (ex_uncond_taken | ex_cond_taken | idex_is_jump)
-                            & advance;
-  assign ex_branch_target = idex_is_jump
-                            ? idex_r2data[8:0]   // BX / JR: target from register
-                            : idex_branch_target; // B / J / BEQ / BNE
-
-  // Return address for BL = word address of instruction after BL = idex_pc + 1
-  wire [63:0] ex_link_addr = {55'b0, idex_pc + 9'd1};
-
-  // Write-back data mux:
-  //   BL  ? return address (idex_pc + 1) into R14
-  //   all others ? ALU result
-  wire [63:0] ex_wdata = idex_is_bl ? ex_link_addr : ex_alu_out;
-  wire [63:0] ex_store = idex_r2data;
-
-  // EX ? EX/MEM pipeline registers
-  reg        exmem_reg_wen;
-  reg        exmem_mem_wen;
-  reg        exmem_is_load;
-  reg [3:0]  exmem_wreg;
-  reg [63:0] exmem_alu_result;
-  reg [63:0] exmem_store_data;
-
   always @(posedge clk) begin
-    if (reset || pc_reset_pulse) begin
-      exmem_reg_wen    <= 1'b0;
-      exmem_mem_wen    <= 1'b0;
-      exmem_is_load    <= 1'b0;
-      exmem_wreg       <= 4'h0;
-      exmem_alu_result <= 64'h0;
-      exmem_store_data <= 64'h0;
-    end else if (advance) begin
-      exmem_reg_wen    <= idex_reg_wen;
-      exmem_mem_wen    <= idex_mem_wen;
-      exmem_is_load    <= idex_is_load;
-      exmem_wreg       <= idex_wreg;
-      exmem_alu_result <= ex_wdata;
-      exmem_store_data <= ex_store;
+      $display("[%0t]   imem_dout=0x%016h, imem_addr_mux=0x%016h, dec_branch_target= 0x%016h, ifid_pc=0x%016h, if_beq_off=0x%016h, if_off24==0x%016h,ex_branch_target=0x%016h, pc=0x%016h", 
+		$time, dut.imem_dout, dut.imem_addr_mux, dut.dec_branch_target, dut.ifid_pc, dut.if_beq_off, dut.if_off24, dut.ex_branch_target, dut.pc_dbg);
+		$display("is_j	:	%b, is_beqbne  %b", dut.is_j, dut.is_beqbne);
+  end
+  // ===========================================================================
+  // check_reg
+  // ===========================================================================
+  task check_reg;
+    input [3:0]   rn;
+    input [63:0]  expected;
+    input [127:0] label;
+    reg   [63:0]  actual;
+    begin
+      actual = `RF[rn];
+      if (actual === expected) begin
+        $display("  PASS  %-32s  R%0d = 0x%016h", label, rn, actual);
+        pass_count = pass_count + 1;
+      end else begin
+        $display("  FAIL  %-32s  R%0d  got=0x%016h  exp=0x%016h",
+                 label, rn, actual, expected);
+        fail_count = fail_count + 1;
+      end
     end
+  endtask
+
+  // ===========================================================================
+  // MAIN
+  // ===========================================================================
+  initial begin
+    pass_count = 0; fail_count = 0;
+    reset = 1'b1; run = 1'b0; step = 1'b0; pc_reset_pulse = 1'b0;
+    imem_prog_we = 1'b0; imem_prog_addr = 9'h0; imem_prog_wdata = 32'h0;
+    dmem_prog_en = 1'b0; dmem_prog_we = 1'b0;
+    dmem_prog_addr = 8'h0; dmem_prog_wdata = 64'h0;
+
+    $dumpfile("tb_pipeline_p_ext.vcd");
+    $dumpvars(0, tb_pipeline_p_ext);
+
+    $display("======================================================");
+    $display("  Extended Pipeline Testbench");
+    $display("======================================================");
+
+    repeat (3) @(posedge clk); #1;
+    reset = 1'b0;
+    @(posedge clk); #1;
+
+    // =========================================================================
+    // TEST 0 ? Regression: MOV / ADD / SUB
+    //
+    //  word  0    MOV R1, #10
+    //  word  1-7  NOP x7
+    //  word  8    MOV R2, #20
+    //  word  9-15 NOP x7
+    //  word 16    ADD R3, R1, R2    ? R3 = 30
+    //  word 17-23 NOP x7
+    //  word 24    SUB R4, R2, R1    ? R4 = 10
+    //  drain
+    // =========================================================================
+    $display("\n--- TEST 0: Regression (MOV/ADD/SUB) ---");
+    do_reset; addr = 0;
+
+    program_imem_word(addr, f_mov(4'd1, 8'd10));       addr=addr+1; // w0
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+
+    program_imem_word(addr, f_mov(4'd2, 8'd20));       addr=addr+1; // w8
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-15
+
+    program_imem_word(addr, f_add_r(4'd3,4'd1,4'd2)); addr=addr+1; // w16
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w17-23
+
+    program_imem_word(addr, f_sub_r(4'd4,4'd2,4'd1)); addr=addr+1; // w24
+    drain_and_run(10);
+
+    check_reg(4'd1, 64'h000000000000000A, "MOV R1,#10");
+    check_reg(4'd2, 64'h0000000000000014, "MOV R2,#20");
+    check_reg(4'd3, 64'h000000000000001E, "ADD R3=R1+R2=30");
+    check_reg(4'd4, 64'h000000000000000A, "SUB R4=R2-R1=10");
+
+    // =========================================================================
+    // TEST 1 ? SLL  (variable shift left)
+    //
+    //  word  0    MOV R1, #1
+    //  word  1-7  NOP x7
+    //  word  8    MOV R2, #4        shift amount
+    //  word  9-15 NOP x7
+    //  word 16    SLL R3, R1, R2    ? R3 = 1<<4 = 16
+    //  word 17-23 NOP x7
+    //  word 24    MOV R4, #0xFF
+    //  word 25-31 NOP x7
+    //  word 32    MOV R5, #3        shift amount
+    //  word 33-39 NOP x7
+    //  word 40    SLL R6, R4, R5    ? R6 = 255<<3 = 2040
+    //  drain
+    // =========================================================================
+    $display("\n--- TEST 1: SLL (variable shift left) ---");
+    do_reset; addr = 0;
+
+    program_imem_word(addr, f_mov(4'd1, 8'd1));        addr=addr+1; // w0
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+
+    program_imem_word(addr, f_mov(4'd2, 8'd4));        addr=addr+1; // w8
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-15
+
+    program_imem_word(addr, f_sll(4'd3,4'd1,4'd2));   addr=addr+1; // w16
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w17-23
+
+    program_imem_word(addr, f_mov(4'd4, 8'hFF));       addr=addr+1; // w24
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w25-31
+
+    program_imem_word(addr, f_mov(4'd5, 8'd3));        addr=addr+1; // w32
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w33-39
+
+    program_imem_word(addr, f_sll(4'd6,4'd4,4'd5));   addr=addr+1; // w40
+    drain_and_run(10);
+
+    check_reg(4'd3, 64'h0000000000000010, "SLL R3=R1<<R2 (1<<4=16)");
+    check_reg(4'd6, 64'h00000000000007F8, "SLL R6=R4<<R5 (255<<3=2040)");
+
+    // =========================================================================
+    // TEST 2 ? SRL  (variable shift right)
+    //
+    //  word  0    MOV R1, #0x80     = 128
+    //  word  1-7  NOP x7
+    //  word  8    MOV R2, #3        shift amount
+    //  word  9-15 NOP x7
+    //  word 16    SRL R3, R1, R2    ? R3 = 128>>3 = 16
+    //  word 17-23 NOP x7
+    //  word 24    MOV R4, #0xFF     = 255
+    //  word 25-31 NOP x7
+    //  word 32    MOV R5, #4        shift amount
+    //  word 33-39 NOP x7
+    //  word 40    SRL R6, R4, R5    ? R6 = 255>>4 = 15
+    //  drain
+    // =========================================================================
+    $display("\n--- TEST 2: SRL (variable shift right) ---");
+    do_reset; addr = 0;
+
+    program_imem_word(addr, f_mov(4'd1, 8'h80));       addr=addr+1; // w0
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+
+    program_imem_word(addr, f_mov(4'd2, 8'd3));        addr=addr+1; // w8
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-15
+
+    program_imem_word(addr, f_srl(4'd3,4'd1,4'd2));   addr=addr+1; // w16
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w17-23
+
+    program_imem_word(addr, f_mov(4'd4, 8'hFF));       addr=addr+1; // w24
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w25-31
+
+    program_imem_word(addr, f_mov(4'd5, 8'd4));        addr=addr+1; // w32
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w33-39
+
+    program_imem_word(addr, f_srl(4'd6,4'd4,4'd5));   addr=addr+1; // w40
+    drain_and_run(10);
+
+    check_reg(4'd3, 64'h0000000000000010, "SRL R3=R1>>R2 (128>>3=16)");
+    check_reg(4'd6, 64'h000000000000000F, "SRL R6=R4>>R5 (255>>4=15)");
+
+    // =========================================================================
+    // TEST 3 ? SLT  (set less than, signed)
+    //
+    //  word  0    MOV R1, #5
+    //  word  1-7  NOP x7
+    //  word  8    MOV R2, #10
+    //  word  9-15 NOP x7
+    //  word 16    SLT R3, R1, R2    ? R3 = (5<10)  = 1
+    //  word 17-23 NOP x7
+    //  word 24    SLT R4, R2, R1    ? R4 = (10<5)  = 0
+    //  word 25-31 NOP x7
+    //  word 32    SLT R5, R1, R1    ? R5 = (5<5)   = 0
+    //  drain
+    // =========================================================================
+    $display("\n--- TEST 3: SLT (set less than, signed) ---");
+    do_reset; addr = 0;
+
+    program_imem_word(addr, f_mov(4'd1, 8'd5));        addr=addr+1; // w0
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+
+    program_imem_word(addr, f_mov(4'd2, 8'd10));       addr=addr+1; // w8
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-15
+
+    program_imem_word(addr, f_slt(4'd3,4'd1,4'd2));   addr=addr+1; // w16
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w17-23
+
+    program_imem_word(addr, f_slt(4'd4,4'd2,4'd1));   addr=addr+1; // w24
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w25-31
+
+    program_imem_word(addr, f_slt(4'd5,4'd1,4'd1));   addr=addr+1; // w32
+    drain_and_run(10);
+
+    check_reg(4'd3, 64'h0000000000000001, "SLT R3=(5<10)=1");
+    check_reg(4'd4, 64'h0000000000000000, "SLT R4=(10<5)=0");
+    check_reg(4'd5, 64'h0000000000000000, "SLT R5=(5<5)=0");
+
+    // =========================================================================
+    // TEST 4 ? BEQ  (branch if equal)
+    //
+    // ?? Case A: taken (R1==R2) ???????????????????????????????????????????????
+    //  word  0    MOV R1, #7
+	 //  word  1    MOV R3, #0
+    //  word  2-7  NOP x7
+    //  word  8    MOV R2, #7
+    //  word  9-15 NOP x7
+    //  word 16    BEQ R1,R2, off=+5  ? target = 16+2+5 = 23
+    //  word 17-20 NOP x4             ? mandatory 4 NOPs after BEQ
+    //  word 21    ADD R3,R3,#1       POISON (must be skipped)
+    //  word 22    ADD R3,R3,#1       POISON (must be skipped)
+    //  word 23    MOV R4, #0xAA      LAND ? R4=0xAA
+    //  word 24-30 NOP x7
+    //
+    // ?? Case B: not taken (R5!=R6) ???????????????????????????????????????????
+    //  word 31    MOV R5, #3
+    //  word 32-38 NOP x7
+    //  word 39    MOV R6, #9
+    //  word 40-46 NOP x7
+    //  word 47    BEQ R5,R6, off=+6  not taken (3!=9)
+    //  word 48-51 NOP x4             ? mandatory 4 NOPs after BEQ
+    //  word 52    ADD R7,R0,#0x55    EXECUTED (fall-through) ? R7=0x55
+    //  drain
+    //
+    // Expected: R3=0 (poison skipped), R4=0xAA (landing), R7=0x55 (fall-thru)
+    // =========================================================================
+    $display("\n--- TEST 4: BEQ (branch if equal) ---");
+    do_reset; addr = 0;
+		
+    // Case A setup
+    program_imem_word(addr, f_mov(4'd1, 8'd7));        addr=addr+1; // w0
+	 program_imem_word(addr, f_mov(4'd3, 8'd0));        addr=addr+1; // w1
+    // repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+	 repeat(6) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+
+    program_imem_word(addr, f_mov(4'd2, 8'd7));        addr=addr+1; // w8
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-15
+
+    // w16: BEQ R1,R2  offset=+5 ? target=23
+    program_imem_word(addr, f_beq(4'd1,4'd2,16'd5));  addr=addr+1; // w16
+
+    // w17-20: 4 mandatory NOPs after BEQ
+    repeat(4) begin program_imem_word(addr,NOP); addr=addr+1; end   // w17-20
+
+    // w21-22: poison (should be skipped by branch)
+    program_imem_word(addr, f_add_i(4'd3,4'd3,8'd1)); addr=addr+1; // w21 POISON
+    program_imem_word(addr, f_add_i(4'd3,4'd3,8'd1)); addr=addr+1; // w22 POISON
+
+    // w23: landing  (16+2+5=23 ?)
+    if (addr !== 9'd23) $display("WARNING: BEQ-A landing not at w23, got %0d", addr);
+    program_imem_word(addr, f_mov(4'd4, 8'hAA));       addr=addr+1; // w23 LAND
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w24-30
+
+    // Case B setup
+    program_imem_word(addr, f_mov(4'd5, 8'd3));        addr=addr+1; // w31
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w32-38
+
+    program_imem_word(addr, f_mov(4'd6, 8'd9));        addr=addr+1; // w39
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w40-46
+
+    // w47: BEQ R5,R6  not taken (3!=9)
+    program_imem_word(addr, f_beq(4'd5,4'd6,16'd6));  addr=addr+1; // w47
+
+    // w48-51: 4 mandatory NOPs after BEQ
+    repeat(4) begin program_imem_word(addr,NOP); addr=addr+1; end   // w48-51
+$stop;
+    // w52: fall-through MUST execute
+    program_imem_word(addr, f_add_i(4'd7,4'd0,8'h55)); addr=addr+1; // w52
+    drain_and_run(10);
+		//$stop;
+    check_reg(4'd3, 64'h0000000000000000, "BEQ taken: R3=0 (poison skipped)");
+    check_reg(4'd4, 64'h00000000000000AA, "BEQ taken: R4=0xAA (landing)");
+    check_reg(4'd7, 64'h0000000000000055, "BEQ not-taken: R7=0x55 (fallthru)");
+
+    // =========================================================================
+    // TEST 5 ? BNE  (branch if not equal)
+    //
+    // ?? Case A: taken (R1!=R2) ???????????????????????????????????????????????
+    //  word  0    MOV R1, #3
+	 //  word  1    MOV R8, #0
+    //  word  2-7  NOP x6
+    //  word  8    MOV R2, #9
+    //  word  9-15 NOP x7
+    //  word 16    BNE R1,R2, off=+5  ? target = 16+2+5 = 23
+    //  word 17-20 NOP x4             ? mandatory 4 NOPs after BNE
+    //  word 21    ADD R8,R8,#1       POISON (must be skipped)
+    //  word 22    ADD R8,R8,#1       POISON (must be skipped)
+    //  word 23    MOV R3, #0xBB      LAND ? R3=0xBB
+    //  word 24-30 NOP x7
+    //
+    // ?? Case B: not taken (R4==R5) ???????????????????????????????????????????
+    //  word 31    MOV R4, #6
+    //  word 32-38 NOP x7
+    //  word 39    MOV R5, #6
+    //  word 40-46 NOP x7
+    //  word 47    BNE R4,R5, off=+6  not taken (6==6)
+    //  word 48-51 NOP x4             ? mandatory 4 NOPs after BNE
+    //  word 52    ADD R6,R0,#0xCC    EXECUTED (fall-through) ? R6=0xCC
+    //  drain
+    //
+    // Expected: R8=0 (poison skipped), R3=0xBB (landing), R6=0xCC (fall-thru)
+    // =========================================================================
+    $display("\n--- TEST 5: BNE (branch if not equal) ---");
+    do_reset; addr = 0;
+
+    // Case A setup
+    program_imem_word(addr, f_mov(4'd1, 8'd3));        addr=addr+1; // w0
+	 program_imem_word(addr, f_mov(4'd8, 8'd0));        addr=addr+1; // w1
+    repeat(6) begin program_imem_word(addr,NOP); addr=addr+1; end   // w2-7
+
+    program_imem_word(addr, f_mov(4'd2, 8'd9));        addr=addr+1; // w8
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-15
+
+    // w16: BNE R1,R2  offset=+5 ? target=23
+    program_imem_word(addr, f_bne(4'd1,4'd2,16'd5));  addr=addr+1; // w16
+
+    // w17-20: 4 mandatory NOPs after BNE
+    repeat(4) begin program_imem_word(addr,NOP); addr=addr+1; end   // w17-20
+
+    // w21-22: poison (should be skipped by branch)
+    program_imem_word(addr, f_add_i(4'd8,4'd8,8'd1)); addr=addr+1; // w21 POISON
+    program_imem_word(addr, f_add_i(4'd8,4'd8,8'd1)); addr=addr+1; // w22 POISON
+
+    // w23: landing  (16+2+5=23 ?)
+    if (addr !== 9'd23) $display("WARNING: BNE-A landing not at w23, got %0d", addr);
+    program_imem_word(addr, f_mov(4'd3, 8'hBB));       addr=addr+1; // w23 LAND
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w24-30
+
+    // Case B setup
+    program_imem_word(addr, f_mov(4'd4, 8'd6));        addr=addr+1; // w31
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w32-38
+
+    program_imem_word(addr, f_mov(4'd5, 8'd6));        addr=addr+1; // w39
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w40-46
+
+    // w47: BNE R4,R5  not taken (6==6)
+    program_imem_word(addr, f_bne(4'd4,4'd5,16'd6));  addr=addr+1; // w47
+
+    // w48-51: 4 mandatory NOPs after BNE
+    repeat(4) begin program_imem_word(addr,NOP); addr=addr+1; end   // w48-51
+
+    // w52: fall-through MUST execute
+    program_imem_word(addr, f_add_i(4'd6,4'd0,8'hCC)); addr=addr+1; // w52
+    drain_and_run(10);
+
+    check_reg(4'd8, 64'h0000000000000000, "BNE taken: R8=0 (poison skipped)");
+    check_reg(4'd3, 64'h00000000000000BB, "BNE taken: R3=0xBB (landing)");
+    check_reg(4'd6, 64'h00000000000000CC, "BNE not-taken: R6=0xCC (fallthru)");
+
+    // =========================================================================
+    // TEST 6 ? J  (absolute jump)
+    //
+    //  word  0    MOV R1, #0         canary (must stay 0)
+    //  word  1-7  NOP x7
+    //  word  8    J  target=20       absolute jump to word 20
+    //  word  9-12 NOP x4             ? mandatory 4 NOPs after J
+    //  word 13-19 ADD R1,R1,#1 x7   POISON (must be skipped)
+    //  word 20    MOV R2, #0xDD      LAND ? R2=0xDD
+    //  drain
+    //
+    // Expected: R1=0 (poison skipped), R2=0xDD (landing)
+    // =========================================================================
+    $display("\n--- TEST 6: J (absolute jump) ---");
+    do_reset; addr = 0;
+
+    program_imem_word(addr, f_mov(4'd1, 8'd0));        addr=addr+1; // w0  R1=0 canary
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+
+    // w8: J target=20
+    program_imem_word(addr, f_j(9'd20));               addr=addr+1; // w8
+
+    // w9-12: 4 mandatory NOPs after J
+    repeat(4) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-12
+
+    // w13-19: poison
+    repeat(7) begin
+      program_imem_word(addr, f_add_i(4'd1,4'd1,8'd1));
+      addr=addr+1;
+    end                                                              // w13-19
+
+    // w20: landing
+    if (addr !== 9'd20) $display("WARNING: J landing not at w20, got %0d", addr);
+    program_imem_word(addr, f_mov(4'd2, 8'hDD));       addr=addr+1; // w20 LAND
+	 $stop;
+    drain_and_run(10);
+
+    check_reg(4'd1, 64'h0000000000000000, "J: R1=0 (poison skipped)");
+    check_reg(4'd2, 64'h00000000000000DD, "J: R2=0xDD (landing)");
+
+    // =========================================================================
+    // TEST 7 ? JR  (jump register)
+    //
+    //  word  0    MOV R9, #30        load target address into R9
+    //  word  1-7  NOP x7             hazard guard (R9 must be ready)
+    //  word  8    JR  R9             jump to word 30
+    //  word  9-12 NOP x4             ? mandatory 4 NOPs after JR
+    //  word 13-29 ADD R1,R1,#1 x17  POISON (must be skipped)
+    //  word 30    MOV R2, #0xEE      LAND ? R2=0xEE
+    //  drain
+    //
+    // Expected: R1=0 (poison skipped, R1 never initialised ? written),
+    //           R2=0xEE (landing)
+    // =========================================================================
+    $display("\n--- TEST 7: JR (jump register) ---");
+    do_reset; addr = 0;
+
+    program_imem_word(addr, f_mov(4'd9, 8'd30));       addr=addr+1; // w0  R9=30
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+
+    // w8: JR R9  (jump to word 30)
+    program_imem_word(addr, f_jr(4'd9));               addr=addr+1; // w8
+
+    // w9-12: 4 mandatory NOPs after JR
+    repeat(4) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-12
+
+    // w13-29: poison (17 words)
+    repeat(17) begin
+      program_imem_word(addr, f_add_i(4'd1,4'd1,8'd1));
+      addr=addr+1;
+    end                                                              // w13-29
+
+    // w30: landing
+    if (addr !== 9'd30) $display("WARNING: JR landing not at w30, got %0d", addr);
+    program_imem_word(addr, f_mov(4'd2, 8'hEE));       addr=addr+1; // w30 LAND
+    drain_and_run(10);
+
+    check_reg(4'd1, 64'h0000000000000000, "JR: R1=0 (poison skipped)");
+    check_reg(4'd2, 64'h00000000000000EE, "JR: R2=0xEE (landing)");
+
+    // =========================================================================
+    // TEST 8 ? BL / JR  (branch-and-link full call/return)
+    //
+    // Proves: (a) BL writes correct return address into R14 = BL_word+1
+    //         (b) subroutine executes correctly
+    //         (c) JR R14 returns to right address
+    //         (d) post-return code executes
+    //
+    // ?? Caller (words 0-54) ???????????????????????????????????????????????????
+    //  word  0    MOV R1, #10        argument
+    //  word  1-7  NOP x7
+    //  word  8    MOV R2, #5         argument
+    //  word  9-15 NOP x7
+    //  word 16    BL  off=+43        target=16+2+43=61, R14?17
+    //  word 17    MOV R5, #0xCA      ? RETURN LANDS HERE (word 17)
+    //  word 18-24 NOP x7
+    //  word 25    MOV R6, #0xFE      second post-return instruction
+    //  word 26-60 NOP (pad to word 60, one before subroutine)
+    //
+    // ?? Subroutine (words 61-70) ??????????????????????????????????????????????
+    //  word 61    ADD R3, R1, R2     ? R3 = 15
+    //  word 62-68 NOP x7
+    //  word 69    SUB R4, R1, R2     ? R4 = 5
+    //  word 70-76 NOP x7             (hazard guard before JR)
+    //
+    //  word 77    JR  R14            return to word 17
+    //  word 78-81 NOP x4             ? mandatory 4 NOPs after JR
+    //
+    // Expected: R14=17, R3=15, R4=5, R5=0xCA, R6=0xFE
+    // =========================================================================
+    $display("\n--- TEST 8: BL / JR (branch-and-link call + return) ---");
+    do_reset; addr = 0;
+
+    // Caller
+    program_imem_word(addr, f_mov(4'd1, 8'd10));       addr=addr+1; // w0  R1=10
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w1-7
+
+    program_imem_word(addr, f_mov(4'd2, 8'd5));        addr=addr+1; // w8  R2=5
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w9-15
+
+    // w16: BL  target=61, offset=61-16-2=43
+    program_imem_word(addr, f_bl(24'd43));             addr=addr+1; // w16
+
+    // w17: return landing ? first instruction executed after JR R14
+    program_imem_word(addr, f_mov(4'd5, 8'hCA));       addr=addr+1; // w17 R5=0xCA
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w18-24
+
+    // w25: second post-return instruction
+    program_imem_word(addr, f_mov(4'd6, 8'hFE));       addr=addr+1; // w25 R6=0xFE
+
+    // pad NOPs up to word 60
+    while (addr < 61) begin program_imem_word(addr,NOP); addr=addr+1; end
+
+    // Subroutine at word 61
+    if (addr !== 9'd61) $display("WARNING: subroutine not at w61, got %0d", addr);
+    program_imem_word(addr, f_add_r(4'd3,4'd1,4'd2)); addr=addr+1; // w61  R3=15
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w62-68
+
+    program_imem_word(addr, f_sub_r(4'd4,4'd1,4'd2)); addr=addr+1; // w69  R4=5
+    repeat(7) begin program_imem_word(addr,NOP); addr=addr+1; end   // w70-76
+
+    // w77: JR R14  (return to word 17)
+    program_imem_word(addr, f_jr(4'd14));              addr=addr+1; // w77
+
+    // w78-81: 4 mandatory NOPs after JR
+    repeat(4) begin program_imem_word(addr,NOP); addr=addr+1; end   // w78-81
+
+    // Run enough cycles to complete caller?subroutine?return?post-return
+    pulse_pc_reset();
+    run_cycles(addr + 30);
+
+    check_reg(4'd14, 64'h0000000000000011, "BL: R14=17 (return addr)");
+    check_reg(4'd3,  64'h000000000000000F, "BL: R3=15 (sub ADD)");
+    check_reg(4'd4,  64'h0000000000000005, "BL: R4=5  (sub SUB)");
+    check_reg(4'd5,  64'h00000000000000CA, "BL: R5=0xCA (post-return)");
+    check_reg(4'd6,  64'h00000000000000FE, "BL: R6=0xFE (post-return)");
+
+    // =========================================================================
+    // SUMMARY
+    // =========================================================================
+    $display("\n======================================================");
+    $display("  Results:  %0d PASSED   %0d FAILED", pass_count, fail_count);
+    $display("======================================================");
+    if (fail_count == 0)
+      $display("  ALL TESTS PASSED");
+    else
+      $display("  *** FAILURES ? inspect tb_pipeline_p_ext.vcd ***");
+    $display("======================================================\n");
+
+    $finish;
   end
 
-// ===========================================================================
-// MEM STAGE  ?  Data memory access
-// ===========================================================================
-  wire [7:0]  mem_bram_addr = exmem_alu_result[7:0];
-  wire [63:0] dmem_douta;
-  wire [63:0] dmem_doutb;
-
-  D_M_64bit_256 u_dmem (
-    .addra (mem_bram_addr),
-    .clka  (clk),
-    .ena   (exmem_is_load | exmem_mem_wen),
-    .wea   (exmem_mem_wen),
-    .dina  (exmem_store_data),
-    .douta (dmem_douta),
-
-    .addrb (dmem_prog_addr),
-    .clkb  (clk),
-    .enb   (dmem_prog_en),
-    .web   (dmem_prog_we),
-    .dinb  (dmem_prog_wdata),
-    .doutb (dmem_doutb)
-  );
-  assign dmem_prog_rdata = dmem_doutb;
-
-  reg        mem_reg_wen;
-  reg        mem_is_load;
-  reg [3:0]  mem_wreg;
-  reg [63:0] mem_alu_result;
-
-  always @(posedge clk) begin
-    if (reset || pc_reset_pulse) begin
-      mem_reg_wen    <= 1'b0;
-      mem_is_load    <= 1'b0;
-      mem_wreg       <= 4'h0;
-      mem_alu_result <= 64'h0;
-    end else if (advance) begin
-      mem_reg_wen    <= exmem_reg_wen;
-      mem_is_load    <= exmem_is_load;
-      mem_wreg       <= exmem_wreg;
-      mem_alu_result <= exmem_alu_result;
-    end
+  // ??? Watchdog ??????????????????????????????????????????????????????????????
+  initial begin
+    #2_000_000;
+    $display("TIMEOUT");
+    $finish;
   end
-
-// ===========================================================================
-// MEM/WB PIPELINE REGISTERS
-// ===========================================================================
-  reg        memwb_wreg_en;
-  reg [3:0]  memwb_wreg;
-  reg [63:0] memwb_alu_result;
-  reg [63:0] memwb_dmem_rdata;
-  reg        memwb_is_load;
-
-  always @(posedge clk) begin
-    if (reset || pc_reset_pulse) begin
-      memwb_wreg_en    <= 1'b0;
-      memwb_wreg       <= 4'h0;
-      memwb_alu_result <= 64'h0;
-      memwb_dmem_rdata <= 64'h0;
-      memwb_is_load    <= 1'b0;
-    end else if (advance) begin
-      memwb_wreg_en    <= mem_reg_wen;
-      memwb_wreg       <= mem_wreg;
-      memwb_alu_result <= mem_alu_result;
-      memwb_dmem_rdata <= dmem_douta;
-      memwb_is_load    <= mem_is_load;
-    end
-  end
-
-// ===========================================================================
-// WB STAGE  ?  Write back to register file
-// ===========================================================================
-  assign wb_wen   = (~reset) & (~pc_reset_pulse) & advance & memwb_wreg_en;
-  assign wb_waddr = memwb_wreg;
-  assign wb_wdata = memwb_is_load ? memwb_dmem_rdata : memwb_alu_result;
 
 endmodule
