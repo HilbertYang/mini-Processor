@@ -116,15 +116,38 @@ NOP (No Operation):
 
 
 
-
-
-
-
-
-
-
-
-
+New instruction But not align with the previous instruction,
+!!! FOR Yukun!!!!!
+This may be modify later
+!!!!!!!!!!!!!!!!!!
+//=============================================================
+//  SLL  Rd,Rn,Rm        Shift Left  by Rm[5:0]
+//    {4'hE, 3'b000, 4'b0110, 1'b0, Rn, Rd, 8'h00, Rm}
+//    (I=0 selects variable-shift; I=1 preserves old shift-by-1 behaviour)
+//
+//  SRL  Rd,Rn,Rm        Shift Right by Rm[5:0]
+//    {4'hE, 3'b000, 4'b0111, 1'b0, Rn, Rd, 8'h00, Rm}
+//
+//  JR   Rm              Jump Register (identical to BX Rm)
+//    {4'hE, 24'h12FFF1, Rm[3:0]}
+//
+//  J    target9         Unconditional absolute jump to 9-bit word address
+//    inst[31:26] = 6'b111010  (op=2'b11 sub=2'b10)
+//    inst[25:0]  = zero-padded target; lower 9 bits used as new PC
+//    {6'b111010, 17'b0, target9[8:0]}
+//
+//  SLT  Rd,Rn,Rm        Set Less Than (signed): Rd = (Rn < Rm) ? 1 : 0
+//    {4'hE, 3'b000, 4'b1011, 1'b0, Rn, Rd, 8'h00, Rm}
+//
+//  BEQ  Rn,Rm,off16     Branch if Equal (Rn == Rm)
+//    inst[31:28]=4'hE  inst[27:24]=4'b1000
+//    inst[23:20]=Rn  inst[19:16]=Rm  inst[15:0]=off16
+//    branch_target = ifid_pc + 2 + sign_extend(off16)
+//    {4'hE, 4'b1000, Rn, Rm, 16'(off16)}
+//
+//  BNE  Rn,Rm,off16     Branch if Not Equal (Rn != Rm)
+//    inst[27:24]=4'b1001
+//    {4'hE, 4'b1001, Rn, Rm, 16'(off16)}
 
 
 
