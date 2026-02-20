@@ -1,3 +1,4 @@
+.LC0:
 .word	323
 .word	123
 .word	-455

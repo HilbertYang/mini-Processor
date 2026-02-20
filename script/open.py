@@ -10,11 +10,15 @@ def open_file(arm):
     except Exception as e:
         raise (f"Error reading file '{arm}': {e}")
         
-    D_write = []
-    I_write = []
+    ALLWRITE = []
     line = 0
     while line < len(contents):
         if contents[line][0] == '.LC0:':
+            CM = contents[line][0]
+            index = CM.find('@')
+            if index != -1:
+                CM = CM[:index].strip()
+            ALLWRITE.append([CM])
             line += 1
             while contents[line][0].startswith('.word'):
                 CM = contents[line][0]
@@ -24,7 +28,7 @@ def open_file(arm):
                 if not CM:
                     line += 1
                     continue  
-                D_write.append([CM])
+                ALLWRITE.append([CM])
                 line += 1
         elif contents[line][0] == 'main:':
             line += 1   
@@ -39,17 +43,15 @@ def open_file(arm):
                     if not CM:
                         line += 1
                         continue  
-                    I_write.append([CM])
+                    ALLWRITE.append([CM])
                     line += 1        
         else:
             line += 1
     
-    return D_write, I_write
+    return ALLWRITE
 
 # arm = r'C:\Users\irryb\Desktop\533\L6\demo.s'
-# D_write, I_write = open_file(arm)
+# ALLWRITE = open_file(arm)
 # with open(r'C:\Users\irryb\Desktop\533\L6\pipeline.txt', 'w') as f:
-#      for line in D_write:
-#         f.write(f"{line[0]}\n")
-#      for line in I_write:
+#      for line in ALLWRITE:
 #         f.write(f"{line[0]}\n")
