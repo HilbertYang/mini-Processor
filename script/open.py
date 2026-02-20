@@ -1,6 +1,13 @@
+#Read arm .s file
+# ↓
+# extract：
+#     1) .LC0 constants
+#     2) main code
+# ↓
+# remove comments and empty lines
+# ↓
+# write to pipeline.txt
 import os
-
-
 def open_file(arm):
     try:
         with open(arm, 'r') as f:                       
@@ -20,6 +27,7 @@ def open_file(arm):
                 CM = CM[:index].strip()
             ALLWRITE.append([CM])
             line += 1
+            # copy all the .word lines until the next label
             while contents[line][0].startswith('.word'):
                 CM = contents[line][0]
                 index = CM.find('@')
@@ -55,3 +63,5 @@ def open_file(arm):
 # with open(r'C:\Users\irryb\Desktop\533\L6\pipeline.txt', 'w') as f:
 #      for line in ALLWRITE:
 #         f.write(f"{line[0]}\n")
+
+
