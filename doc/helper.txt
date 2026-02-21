@@ -160,30 +160,6 @@ J    target9         Unconditional absolute jump to 9-bit word address
 
 
 
-
-
-
-
-
-
-
-New instruction But not align with the previous instruction,
-!!! FOR Yukun!!!!!
-This may be modify later
-!!!!!!!!!!!!!!!!!!
-//=============================================================
-
-    branch_target = j_target[8:0];
-
-
-    branch_target  = pc + 9'd2 + beq_offset[8:0];
-
-
-
-
-
-
-
 //  [31:28]  cond   – 1110 (always; condition codes not evaluated)
 //  [27:26]  op     – 00=data-proc, 01=load/store, 10=branch
 //
