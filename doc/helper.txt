@@ -54,7 +54,7 @@ Data-processing (op=00):
 
                         1110 0000 0001 0000 0000 0000 0000 0000
 
-    CMP Rn, Operand2
+    CMP Rn, Operand2    DONT SUPPORT WB
     Operand2 is imm8:   1110 00 1(use imm) 1010(CMP) 0(S - no use here) 0000(Rn[19:16]) 0000(Rd[15:12]) 0000(rot[11:8]) 00000000(imm8)
 
                         1110 0010 1010 0000 0000 0000 0000 0000
@@ -62,7 +62,8 @@ Data-processing (op=00):
     Operand2 is Rm  :   1110 00 0(use reg) 1010(CMP) 0(S - no use here) 0000(Rn[19:16]) 0000(Rd[15:12]) 0000(rot[11:8]) 0000(no use) 0000(Rm[3:0])
 
                         1110 0000 1010 0000 0000 0000 0000 0000
-    TST Rn, Operand2
+
+    TST Rn, Operand2    DONT SUPPORT WB
     Operand2 is imm8:   1110 00 1(use imm) 1000(TST) 0(S - no use here) 0000(Rn[19:16]) 0000(Rd[15:12]) 0000(rot[11:8]) 00000000(imm8)
 
                         1110 0010 1000 0000 0000 0000 0000 0000
@@ -70,12 +71,41 @@ Data-processing (op=00):
     Operand2 is Rm  :   1110 00 0(use reg) 1000(TST) 0(S - no use here) 0000(Rn[19:16]) 0000(Rd[15:12]) 0000(rot[11:8]) 0000(no use) 0000(Rm[3:0])
 
                         1110 0000 1000 0000 0000 0000 0000 0000
+    
+    TEQ 
+
+    Operand2 is imm8:   1110 00 1(use imm) 1001(TEQ) 0(S - no use here) 0000(Rn[19:16]) 0000(Rd[15:12]) 0000(rot[11:8]) 00000000(imm8)
+    Operand2 is Rm  :   1110 00 0(use imm) 1001(TEQ) 0(S - no use here) 0000(Rn[19:16]) 0000(Rd[15:12]) 0000(rot[11:8]) 00000000(imm8)
+
+
+
+    SLL  Rd,Rn,Rm        Shift Left  by Rm[5:0]
+        {4'hE, 3'b00I, 4'b0110, 1'b0, Rn, Rd, 8'h00, Rm}
+        (I=0 selects variable-shift; I=1 preserves old shift-by-1 behaviour)
+
+    SLL  Rd,Rn,imm       Shift Left
+        {4'hE, 3'b001, 4'b0110, 1'b0, Rn, Rd, 8'h00, imm8}
+
+    SRL  Rd,Rn,Rm        Shift Right by Rm[5:0]
+        {4'hE, 3'b000, 4'b0111, 1'b0, Rn, Rd, 8'h00, Rm}
+
+    
+    SLT  Rd,Rn,Rm        Set Less Than (signed): Rd = (Rn < Rm) ? 1 : 0
+        {4'hE, 3'b000, 4'b1011, 1'b0, Rn, Rd, 8'h00, Rm}
+
+//------------sepcial case for 00-----------
+    BX Rm (branch-and-exchange, op=00):
+    BX Rm
+                        1110 0001 0010 1111 1111 1111 0001 0000(Rm[3:0])
+    JR   Rm              Jump Register (identical to BX Rm)
+        {4'hE, 24'h12FFF1, Rm[3:0]}
 //=============================================================
 //=============================================================
 //=============================================================
 
-Load / Store (op=01):(imm-Even though here is 0, we still use offset to do calculation)
-    LDR Rd, [Rn, #offset] (This is just LW in MIPS, here Rd is the destination register and Rn is the base register)
+Load / Store (op=01):DONT SUPPORT WIRITE BACK HERE, SET W ALWAYS TO BE 0.
+
+    LDR Rd, [Rn, #offset] 
     Rd = Memory[ Rn + offset ]
     ADD offset:         1110 01 0(imm) 1(P=pre-index) 1(U=add offset) 0(B=word) 0(W=no writeback) 1(L=load) 0000(Rn[19:16]) 0000(Rd[15:12]) 0000 0000 0000(imm12[11:0])
                         
@@ -103,17 +133,41 @@ Branch (op=10):
                         1110 1010(B) 0000 0000 0000 0000 0000 0000  (offset is calculated by assembler)
     BL label
                         1110 1011(BL) 0000 0000 0000 0000 0000 0000  (offset is calculated by assembler)
-//=============================================================
-//=============================================================
-//=============================================================
-BX Rm (branch-and-exchange, op=00):
-    BX Rm
-                        1110 0001 0010 1111 1111 1111 0001 0000(Rm[3:0])
+
+    branch_target = ifid_pc + 2 + sign_extend(off16)
+    BEQ  Rn,Rm,off16     Branch if Equal (Rn == Rm)
+                        {4'hE, 4'b1000, Rn, Rm, 16'(off16)}
+                        inst[31:28]=4'hE  inst[27:24]=4'b1000  inst[23:20]=Rn  inst[19:16]=Rm  inst[15:0]=off16
+    BNE  Rn,Rm,off16     Branch if Not Equal (Rn != Rm)
+                        inst[27:24]=4'b1001
+                        {4'hE, 4'b1001, Rn, Rm, 16'(off16)}
+
+                        
+                        
 //=============================================================
 //=============================================================
 //=============================================================
 NOP (No Operation):
     NOP:  32'hE000_0000  (AND R0,R0,R0 with result discarded)
+
+//============================================================
+JUMP (op = 11)
+J    target9         Unconditional absolute jump to 9-bit word address
+   inst[31:26] = 6'b111011
+   inst[25:0]  = zero-padded target; lower 9 bits used as new PC
+   {6'b111010, 17'b0, target9[8:0]}
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -122,46 +176,14 @@ New instruction But not align with the previous instruction,
 This may be modify later
 !!!!!!!!!!!!!!!!!!
 //=============================================================
-//  SLL  Rd,Rn,Rm        Shift Left  by Rm[5:0]
-//    {4'hE, 3'b000, 4'b0110, 1'b0, Rn, Rd, 8'h00, Rm}
-//    (I=0 selects variable-shift; I=1 preserves old shift-by-1 behaviour)
-
-    SLL  Rd,Rn,imm       Shift Left  
-      {4'hE, 3'b001, 4'b0110, 1'b0, Rn, Rd, 8'h00, imm8}
-//
-//  SRL  Rd,Rn,Rm        Shift Right by Rm[5:0]
-//    {4'hE, 3'b000, 4'b0111, 1'b0, Rn, Rd, 8'h00, Rm}
-
-    SLL  Rd,Rn,imm       Shift Left  
-      {4'hE, 3'b001, 4'b0110, 1'b0, Rn, Rd, 8'h00, imm8}
-//  JR   Rm              Jump Register (identical to BX Rm)
-//    {4'hE, 24'h12FFF1, Rm[3:0]}
-
 
     branch_target = j_target[8:0];
-
-//  J    target9         Unconditional absolute jump to 9-bit word address
-//    inst[31:26] = 6'b111010  (op=2'b11 sub=2'b10)
-//    inst[25:0]  = zero-padded target; lower 9 bits used as new PC
-//    {6'b111010, 17'b0, target9[8:0]}
-//
-//  SLT  Rd,Rn,Rm        Set Less Than (signed): Rd = (Rn < Rm) ? 1 : 0
-//    {4'hE, 3'b000, 4'b1011, 1'b0, Rn, Rd, 8'h00, Rm}
-//
-
 
 
     branch_target  = pc + 9'd2 + beq_offset[8:0];
 
-//  BEQ  Rn,Rm,off16     Branch if Equal (Rn == Rm)
-//    inst[31:28]=4'hE  inst[27:24]=4'b1000
-//    inst[23:20]=Rn  inst[19:16]=Rm  inst[15:0]=off16
-//    branch_target = ifid_pc + 2 + sign_extend(off16)
-//    {4'hE, 4'b1000, Rn, Rm, 16'(off16)}
-//
-//  BNE  Rn,Rm,off16     Branch if Not Equal (Rn != Rm)
-//    inst[27:24]=4'b1001
-//    {4'hE, 4'b1001, Rn, Rm, 16'(off16)}
+
+
 
 
 
