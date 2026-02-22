@@ -96,14 +96,17 @@ module pipeline (
   // Forward declarations ? driven in EX stage below.
   wire        ex_branch_taken;
   wire [8:0]  ex_branch_target;
+  wire [1:0]      ex_thread_id;
 
 // ===========================================================================
 // IF STAGE
 // ===========================================================================
-  reg [8:0] pc;
-  assign pc_dbg = pc;
+  reg [8:0] pc [3:0];
+  assign pc_dbg = pc[0];
+  reg [1:0] if_thread_id;
+  reg [1:0] if_pc_id;
 
-  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc;
+  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc[if_thread_id];
   wire [31:0] imem_dout;
 
   I_M_32bit_512depth u_imem (
@@ -117,9 +120,24 @@ module pipeline (
   assign if_instr_dbg = imem_dout;
 
   always @(posedge clk) begin
-    if      (reset || pc_reset_pulse) pc <= 9'd0;
-    else if (ex_branch_taken)         pc <= ex_branch_target;
-    else if (advance)                 pc <= pc + 9'd1;
+    if      (reset || pc_reset_pulse) begin 
+			pc[0] <= 9'b000000000;
+			pc[1] <= 9'b010000000;
+			pc[2] <= 9'b100000000;
+			pc[3] <= 9'b110000000;
+			if_thread_id <= 2'b00;
+			end
+    else if (ex_branch_taken)         pc[ex_thread_id] <= ex_branch_target;
+    else if (advance)              
+	 begin  
+		pc[if_thread_id] <= pc[if_thread_id] + 9'd1;
+		if_thread_id <= if_thread_id + 1'b1;
+		
+		if (pc[if_thread_id][6:0] == 7'b1111110) 
+				begin
+					pc[if_thread_id][6:0] <= 7'd0000000;
+				end
+	 end
   end
 
 // ===========================================================================
@@ -129,12 +147,16 @@ module pipeline (
   //wire [31:0] ifid_instr;
   reg [8:0]  ifid_pc;
   reg [8:0]  pc_delay;
+  reg [1:0] if_thread_id_delay;
+  reg [1:0] ifid_thread_id;
   
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
       pc_delay    <= 9'd0;
+		if_thread_id_delay <= 2'b00;
     end else if (advance) begin
-      pc_delay    <= pc;
+      pc_delay    <= pc[if_thread_id];
+		if_thread_id_delay <= if_thread_id;
     end
   end
 	 
@@ -146,10 +168,12 @@ module pipeline (
     if (reset || pc_reset_pulse) begin
       ifid_instr <= 32'h0;
       ifid_pc    <= 9'd0;
+		ifid_thread_id <= 2'b00;
     end else if (advance) begin
       ifid_instr <= imem_dout;
       //ifid_pc    <= pc;
 		ifid_pc <= pc_delay;
+		ifid_thread_id <= if_thread_id_delay;
     end
   end
   
@@ -173,6 +197,8 @@ module pipeline (
   wire        if_U      = ifid_instr[23];
   wire [11:0] if_imm12  = ifid_instr[11:0];
 
+  // wire [1:0] if_thread_id = ifid_thread_id ;
+  
   // BEQ/BNE field extraction (custom encoding ? lives in inst[27:24]=1000/1001)
   wire [3:0]  if_beq_type = ifid_instr[27:24];  // 4'b1000=BEQ, 4'b1001=BNE
   wire [3:0]  if_beq_Rn   = ifid_instr[23:20];
@@ -236,6 +262,7 @@ module pipeline (
   reg        dec_is_cond_branch; // 1 = BEQ or BNE
   reg        dec_branch_cond;    // 0 = BEQ, 1 = BNE
   reg        dec_is_bl;          // 1 = BL: write return addr (BL_word+1) to R14
+		reg signed [9:0] full_branch_calc;
 
   always @(*) begin
     // Safe defaults
@@ -256,9 +283,13 @@ module pipeline (
     // off24 is a signed 24-bit word offset.  Cast it to signed so Verilog
     // sign-extends during the 9-bit addition; the result is automatically
     // truncated to 9 bits by the assignment target width.
-    dec_branch_target = ifid_pc + 9'd2 + if_off24[8:0];
-	 //dec_branch_target = ifid_pc + 9'd2 + imem_dout[8:0];
+    //dec_branch_target = ifid_pc + 9'd2 + if_off24[8:0];
 
+		full_branch_calc = $signed({1'b0, ifid_pc}) + 
+                          $signed(10'd2) + 
+                          $signed({{1{if_off24[8]}}, if_beq_off});
+		dec_branch_target = full_branch_calc[8:0];
+		
     // ?? Priority 1: BEQ / BNE ????????????????????????????????????????????????
     if (is_beqbne) begin
       // Use ALU to compute Rn - Rm; branch if zero (BEQ) or nonzero (BNE)
@@ -269,7 +300,12 @@ module pipeline (
       dec_is_cond_branch = 1'b1;
       dec_branch_cond    = (if_beq_type == 4'b1001); // 1=BNE, 0=BEQ
       // Branch target: ifid_pc + 2 + sign_extend(off16), truncated to 9 bits
-      dec_branch_target  = ifid_pc + 9'd2 + if_beq_off[8:0];
+      // dec_branch_target  = ifid_pc + 9'd2 + if_beq_off[8:0];
+		
+		full_branch_calc = $signed({1'b0, ifid_pc}) + 
+                          $signed(10'd2) + 
+                          $signed({{1{if_beq_off[8]}}, if_beq_off});
+		dec_branch_target = full_branch_calc[8:0];
 
     // ?? Priority 2: J (absolute jump) ????????????????????????????????????????
     end else if (is_j) begin
@@ -371,10 +407,12 @@ module pipeline (
   wire        wb_wen;
   wire [3:0]  wb_waddr;
   wire [63:0] wb_wdata;
+  wire [1:0] wb_thread_id;
 
   // ---------------------------------------------------------------------------
   // Register file
   // ---------------------------------------------------------------------------
+  /*
   REG_FILE #(.data_width(64), .addr_width(4)) u_rf (
     .clk    (clk),
     .wena   (wb_wen),
@@ -385,6 +423,20 @@ module pipeline (
     .r0data (rf_r1data),
     .r1data (rf_r2data)
   );
+  */
+REG_FILE_BANK #(.data_width(64), .addr_width(4), .th_id_width(2)) u_rf (
+    .clk    (clk),
+    .wena   (wb_wen),
+	 .rd_th_id (ifid_thread_id),
+	 .w_th_id (wb_thread_id),
+    .r0addr (id_reg1),
+    .r1addr (id_reg2),
+    .waddr  (wb_waddr),
+    .wdata  (wb_wdata),
+    .r0data (rf_r1data),
+    .r1data (rf_r2data)
+);
+
 
   // ---------------------------------------------------------------------------
   // ID ? ID/EX pipeline registers
@@ -405,6 +457,7 @@ module pipeline (
   reg        idex_branch_cond;    // 0 = BEQ (take if zero), 1 = BNE (take if nonzero)
   reg        idex_is_bl;          // 1 = BL: EX writes return address instead of ALU result
   reg [8:0]  idex_pc;             // word address of the BL instruction itself
+  reg [1:0] idex_thread_id;
 
   always @(posedge clk) begin
     if (reset || pc_reset_pulse || ex_branch_taken) begin
@@ -424,6 +477,7 @@ module pipeline (
       idex_branch_cond    <= 1'b0;
       idex_is_bl          <= 1'b0;
       idex_pc             <= 9'd0;
+		idex_thread_id 		<= 2'b00;
     end else if (advance) begin
       idex_alu_ctrl       <= dec_alu_ctrl;
       idex_use_imm        <= dec_use_imm;
@@ -441,6 +495,7 @@ module pipeline (
       idex_branch_cond    <= dec_branch_cond;
       idex_is_bl          <= dec_is_bl;
       idex_pc             <= ifid_pc;         // word addr of the BL instruction
+		idex_thread_id <= ifid_thread_id;
     end
   end
 
@@ -450,7 +505,9 @@ module pipeline (
 
   wire [63:0] ex_alu_A = idex_r1data;
   wire [63:0] ex_alu_B = idex_use_imm ? idex_imm64 : idex_r2data;
-
+  
+  assign ex_thread_id = idex_thread_id;
+  
   wire [63:0] ex_alu_out;
   wire        ex_alu_ovf;
 
@@ -496,6 +553,7 @@ module pipeline (
   reg [3:0]  exmem_wreg;
   reg [63:0] exmem_alu_result;
   reg [63:0] exmem_store_data;
+  reg [1:0] exmem_thread_id;
 
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
@@ -505,6 +563,7 @@ module pipeline (
       exmem_wreg       <= 4'h0;
       exmem_alu_result <= 64'h0;
       exmem_store_data <= 64'h0;
+		exmem_thread_id 		<= 2'b00;
     end else if (advance) begin
       exmem_reg_wen    <= idex_reg_wen;
       exmem_mem_wen    <= idex_mem_wen;
@@ -512,6 +571,7 @@ module pipeline (
       exmem_wreg       <= idex_wreg;
       exmem_alu_result <= ex_wdata;
       exmem_store_data <= ex_store;
+		exmem_thread_id <= ex_thread_id;
     end
   end
 
@@ -543,18 +603,21 @@ module pipeline (
   reg        mem_is_load;
   reg [3:0]  mem_wreg;
   reg [63:0] mem_alu_result;
-
+  reg [1:0]  mem_thread_id;
+  
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
       mem_reg_wen    <= 1'b0;
       mem_is_load    <= 1'b0;
       mem_wreg       <= 4'h0;
       mem_alu_result <= 64'h0;
+		mem_thread_id <= 2'b00;
     end else if (advance) begin
       mem_reg_wen    <= exmem_reg_wen;
       mem_is_load    <= exmem_is_load;
       mem_wreg       <= exmem_wreg;
       mem_alu_result <= exmem_alu_result;
+		mem_thread_id <= exmem_thread_id;
     end
   end
 
@@ -566,6 +629,7 @@ module pipeline (
   reg [63:0] memwb_alu_result;
   reg [63:0] memwb_dmem_rdata;
   reg        memwb_is_load;
+  reg [1:0]  memwb_thread_id;
 
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
@@ -574,12 +638,14 @@ module pipeline (
       memwb_alu_result <= 64'h0;
       memwb_dmem_rdata <= 64'h0;
       memwb_is_load    <= 1'b0;
+		memwb_thread_id <= 2'b00;
     end else if (advance) begin
       memwb_wreg_en    <= mem_reg_wen;
       memwb_wreg       <= mem_wreg;
       memwb_alu_result <= mem_alu_result;
       memwb_dmem_rdata <= dmem_douta;
       memwb_is_load    <= mem_is_load;
+		memwb_thread_id <= mem_thread_id;
     end
   end
 
@@ -589,5 +655,5 @@ module pipeline (
   assign wb_wen   = (~reset) & (~pc_reset_pulse) & advance & memwb_wreg_en;
   assign wb_waddr = memwb_wreg;
   assign wb_wdata = memwb_is_load ? memwb_dmem_rdata : memwb_alu_result;
-
+  assign wb_thread_id = memwb_thread_id;
 endmodule
