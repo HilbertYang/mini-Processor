@@ -107,7 +107,7 @@ REGS_MAP = {
     'ip' : '1111'}
 
 ### we map r0 -> r11 , SLT sign bit -> r10,r9,  store imm SLT and SHIFT: r8
-## test reg: r7
+## identical 1 reg: r7
 
 
 SLT_AB = '1010'  #this is for bge
@@ -205,6 +205,7 @@ def change_logic(ALLWRITE, PC_start = 0, RMEM_START = 0, WORKPLACE_START = 0, NO
     output = []
 
     #reset all regs to 0
+
     for reg in REGS_MAP.keys():
         mov_instr = f'mov {reg}, #0'
         output.extend(arm_2_pipeline(mov_instr, -1, NOP_NUM = 0))
@@ -506,7 +507,7 @@ def arm_2_pipeline(write_line, line, NOP_NUM = 0):
         
         elif instr_decode[0] == 'str':
             op, rd, data = write_line.split(maxsplit=2)
-            NOP_NUM = 0
+            # NOP_NUM = 0
             rd = rd.replace(',', '').strip()
             rd = REGS_MAP.get(rd)
             data = data.strip()
@@ -638,7 +639,7 @@ def arm_2_pipeline(write_line, line, NOP_NUM = 0):
                 rot = ROT
             except Exception:
                 raise ValueError(f"Invalid cmp instruction in line {line}: {write_line}")
-            cmd = BI_MAP.get('con_process') + BI_MAP.get('process_prefix') + r_ctrl + BI_MAP.get('S')+ BI_MAP.get('SLT')
+            cmd = BI_MAP.get('con_process') + BI_MAP.get('process_prefix') + r_ctrl + BI_MAP.get('SLT') + BI_MAP.get('S')
             for i in range(2):
                 if i == 0:
                     rn = r1
@@ -664,15 +665,26 @@ def arm_2_pipeline(write_line, line, NOP_NUM = 0):
                 rm = SLT_AB
             else:
                 rm = SLT_BA
-            rn = REGS_MAP.get('r0') #we don't care about the value in r0 since we only care about the sign bit for slt instruction, and we have stored the sign bit in r10
+            rn = REGS_MAP.get('r0')  #for now, we use r7 == 1
+            # mov_instr = f'mov r7, #1'
+            # pipe_instr.extend(arm_2_pipeline(mov_instr, line, NOP_NUM))
+            # rn = REGS_MAP.get('r7')
+
             if branch_label_map.get(line) is not None:
                     pc_current = branch_label_map.get(line)[0]
                     rm = branch_label_map.get(line)[1]
             else:
                 pc_current = PC
             if jump_label is not None:                
-                off16 = jump_label - pc_current - 2
+                off16 = jump_label - pc_current - 2 #+ 1
                 offset = hex_bi(f'{off16}', width=16, signed=True)
+
+                # off_top = hex_bi (f'{jump_label}', width=32, signed=True)[-9:] # we only need the last 9 bits because the offset is 9 bits, and we will add 0000 in the middle to make it 16 bits
+                # off_top = off_top[-9:-4] # we only use top 5 bits
+                # off_buttom = offset[-4:] # we only use bottom 4 bits
+                # offset = off_top + off_buttom
+                # offset = '0000' + '000' +offset
+
                 header = BI_MAP.get('B_prefix') + BI_MAP.get('BEQ')
                 cmd = f'{BI_MAP.get("con_process")}{header}'
                 hex_instr = build_instr(cmd, rn, rm, offset, line)
@@ -705,8 +717,14 @@ def arm_2_pipeline(write_line, line, NOP_NUM = 0):
             else:
                 pc_current = PC
             if jump_label is not None:               
-                off16 = jump_label - pc_current - 2
+                off16 = jump_label - pc_current - 2 #+1             
                 offset = hex_bi(f'{off16}', width=9, signed=True)
+
+                # off_top = hex_bi ( f'{jump_label}', width=32, signed=True)[-9:] # we only need the last 9 bits because the offset is 9 bits, and we will add 0000 in the middle to make it 16 bits
+                # off_top = off_top[-9:-4] # we only use top 5 bits
+                # off_buttom = offset[-4:] # we only use bottom 4 bits
+                # offset = off_top + off_buttom
+
                 offset = '0000' + '000' +offset
                 rn = '0000'
                 rd = '0000'
@@ -768,7 +786,7 @@ def arm_2_pipeline(write_line, line, NOP_NUM = 0):
     return pipe_instr
 
 def main():
-    with open('C:\\Users\\irryb\\Desktop\\533\\L6\\line.txt', 'r') as f:
+    with open('C:\\Users\\irryb\\Desktop\\533\\L6\\pipeline.txt', 'r') as f:
         all_lines = [[line.strip()] for line in f ]
     output = change_logic(all_lines, PC_start=0, RMEM_START=0, WORKPLACE_START=0, NOP_NUM=4)
     with open('C:\\Users\\irryb\\Desktop\\533\\L6\\pp_output.txt', 'w') as f:
@@ -777,5 +795,4 @@ def main():
             
 if __name__ == "__main__":
     main()
-
 
