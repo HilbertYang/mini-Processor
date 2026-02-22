@@ -192,8 +192,13 @@ module tb_sort;
   // ===========================================================================
   // Tasks
   // ===========================================================================
-    file_handle_imem = $fopen("imem_sort_mt_1nop.txt", "w");
-  file_handle_dmem = $fopen("dmem_sort_mt_1nop.txt", "w");
+
+    integer file_handle_imem;
+  integer file_handle_dmem;
+  initial begin
+  file_handle_imem = $fopen("imem.txt", "w");
+  file_handle_dmem = $fopen("dmem.txt", "w");
+  end
   task program_imem_word;
     input [8:0]  waddr;
     input [31:0] data;
