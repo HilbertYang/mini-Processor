@@ -192,10 +192,14 @@ module tb_sort;
   // ===========================================================================
   // Tasks
   // ===========================================================================
+    file_handle_imem = $fopen("imem_sort_mt_1nop.txt", "w");
+  file_handle_dmem = $fopen("dmem_sort_mt_1nop.txt", "w");
   task program_imem_word;
     input [8:0]  waddr;
     input [31:0] data;
     begin
+	 	   $fwrite(file_handle_imem, "%h;%h\n", waddr, data);
+
       run = 1'b0; step = 1'b0;
       imem_prog_addr  = waddr;
       imem_prog_wdata = data;
@@ -209,6 +213,8 @@ module tb_sort;
     input [7:0]  waddr;
     input [63:0] data;
     begin
+	 		$fwrite(file_handle_dmem, "%h;%h\n", waddr, data);
+
       run = 1'b0; step = 1'b0;
       dmem_prog_addr  = waddr;
       dmem_prog_wdata = data;
@@ -465,8 +471,10 @@ module tb_sort;
     else
       $display("  *** FAILURES - inspect tb_sort.vcd ***");
     $display("======================================================\n");
-
+	  $fclose(file_handle_dmem);
+	  $fclose(file_handle_imem);
     $finish;
+	 
   end
 
   // ---------------------------------------------------------------------------
