@@ -153,6 +153,7 @@ module pipeline (
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
       pc_delay    <= 9'd0;
+		if_thread_id_delay <= 2'b00;
     end else if (advance) begin
       pc_delay    <= pc[if_thread_id];
 		if_thread_id_delay <= if_thread_id;
@@ -167,6 +168,7 @@ module pipeline (
     if (reset || pc_reset_pulse) begin
       ifid_instr <= 32'h0;
       ifid_pc    <= 9'd0;
+		ifid_thread_id <= 2'b00;
     end else if (advance) begin
       ifid_instr <= imem_dout;
       //ifid_pc    <= pc;
