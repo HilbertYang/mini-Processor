@@ -1,92 +1,54 @@
 `timescale 1ns/1ps
 // =============================================================================
-// tb_sort.v  -  Bubble-sort testbench for pipeline_p.v
+// tb_sort.v  ?  Bubble-sort testbench for pipeline_p.v  (NO NOPs version)
 //
-// NOP policy (1-NOP version):
-//   - Exactly 1 NOP after every branch (BEQ, B) as a branch-delay slot
-//   - Exactly 1 NOP between every producer and the next instruction that
-//     reads its result as a hazard guard
+// The program contains ZERO hazard-guard NOPs and ZERO branch-delay NOPs.
+// All 28 instructions map 1-to-1 from the original assembly, with only
+// two structural adaptations vs the ARM source:
 //
-// Program layout: 54 words  (28 real instructions + 26 NOPs)
-// -----------------------------------------------------------------------------
-//  w 0  main:     MOV  R1,#0          base addr = DMEM word 0
-//  w 1            NOP                 hazard R1
-//  w 2            MOV  R0,#0          R0 = zero constant
-//  w 3            NOP                 hazard R0
-//  w 4            MOV  R7,#0          R7 = shift 0  (word addr, not byte addr)
-//  w 5            NOP                 hazard R7
-//  w 6            MOV  R2,#0          i = 0
-//  w 7            NOP                 hazard R2
-//  w 8  i_loop:   MOV  R10,#10        limit = 10
-//  w 9            NOP                 hazard R10
-//  w10            SLT  R11,R2,R10     R11 = (i < 10) ? 1 : 0
-//  w11            NOP                 hazard R11 -> BEQ
-//  w12            BEQ  R11,R0,done    off=+36 -> w50   if i >= 10 goto done
-//  w13            NOP                 branch delay
-//  w14            ADD  R3,R2,#0       j = i
-//  w15            NOP                 hazard R3 -> ADD
-//  w16            ADD  R3,R3,#1       j = i+1
-//  w17            NOP                 hazard R3 -> SLT j_loop
-//  w18  j_loop:   SLT  R11,R3,R10    R11 = (j < 10) ? 1 : 0
-//  w19            NOP                 hazard R11 -> BEQ
-//  w20            BEQ  R11,R0,i_next  off=+24 -> w46   if j >= 10 goto i_next
-//  w21            NOP                 branch delay
-//  w22            SLL  R8,R2,R7       R8 = i  (word addr of array[i])
-//  w23            NOP                 hazard R8 -> ADD
-//  w24            ADD  R8,R1,R8       R8 = base + i
-//  w25            NOP                 hazard R8 -> LDR
-//  w26            SLL  R9,R3,R7       R9 = j  (word addr of array[j])
-//  w27            NOP                 hazard R9 -> ADD
-//  w28            ADD  R9,R1,R9       R9 = base + j
-//  w29            NOP                 hazard R9 -> LDR
-//  w30            LDR  R5,[R8,#0]     R5 = array[i]
-//  w31            NOP                 hazard R5 -> SLT
-//  w32            LDR  R6,[R9,#0]     R6 = array[j]
-//  w33            NOP                 hazard R6 -> SLT
-//  w34            SLT  R4,R6,R5       R4 = (array[j] < array[i]) ? 1 : 0
-//  w35            NOP                 hazard R4 -> BEQ
-//  w36            BEQ  R4,R0,no_swap  off=+4  -> w42   if no swap needed skip
-//  w37            NOP                 branch delay
-//  w38            STR  R5,[R9,#0]     array[j] = old array[i]
-//  w39            NOP                 pipeline drain before next STR
-//  w40            STR  R6,[R8,#0]     array[i] = old array[j]
-//  w41            NOP                 pipeline drain after STR
-//  w42  no_swap:  ADD  R3,R3,#1       j++
-//  w43            NOP                 hazard R3 -> SLT at j_loop head
-//  w44            B    j_loop         off=-28  24'hFFFFE4 -> w18
-//  w45            NOP                 branch delay
-//  w46  i_next:   ADD  R2,R2,#1       i++
-//  w47            NOP                 hazard R2 -> i_loop head
-//  w48            B    i_loop         off=-42  24'hFFFFD6 -> w8
-//  w49            NOP                 branch delay
-//  w50  done:     NOP
-//  w51            B    halt           off=0    24'h000000 -> w53
-//  w52            NOP                 branch delay
-//  w53  halt:     NOP                 halt landing
+//   1. R7 = 0 instead of R7 = 2  (pipeline uses word addresses, not byte)
+//   2. MOV R3,R2 encoded as ADD R3,R2,#0 (no reg-to-reg MOV in this ISA)
 //
-// Branch offsets  (target_word - branch_word - 2):
-//   BEQ @w12 -> done    @w50 : +36
-//   BEQ @w20 -> i_next  @w46 : +24
-//   BEQ @w36 -> no_swap @w42 : +4
-//   B   @w44 -> j_loop  @w18 : -28  (24'hFFFFE4)
-//   B   @w48 -> i_loop  @w8  : -42  (24'hFFFFD6)
-//   B   @w51 -> halt    @w53 :  0   (24'h000000)
+// Full instruction listing (28 words):
+// ?????????????????????????????????????????????????????????????????????????????
+//  w 0  main:     MOV  R1,#0          R1 = base address (DMEM word 0)
+//  w 1            MOV  R0,#0          R0 = zero constant
+//  w 2            MOV  R7,#0          R7 = shift amount 0 (word addressing)
+//  w 3            MOV  R2,#0          i = 0
+//  w 4  i_loop:   MOV  R10,#10        limit = 10
+//  w 5            SLT  R11,R2,R10     R11 = (i < 10) ? 1 : 0
+//  w 6            BEQ  R11,R0,done    off=+17 ? w25   if i>=10 goto done
+//  w 7            ADD  R3,R2,#0       j = i
+//  w 8            ADD  R3,R3,#1       j = i + 1
+//  w 9  j_loop:   SLT  R11,R3,R10    R11 = (j < 10) ? 1 : 0
+//  w10            BEQ  R11,R0,i_next  off=+11 ? w23   if j>=10 goto i_next
+//  w11            SLL  R8,R2,R7       R8 = i << 0 = i  (word addr of array[i])
+//  w12            ADD  R8,R1,R8       R8 = base + i
+//  w13            SLL  R9,R3,R7       R9 = j << 0 = j  (word addr of array[j])
+//  w14            ADD  R9,R1,R9       R9 = base + j
+//  w15            LDR  R5,[R8,#0]     R5 = array[i]
+//  w16            LDR  R6,[R9,#0]     R6 = array[j]
+//  w17            SLT  R4,R6,R5       R4 = (array[j] < array[i]) ? 1 : 0
+//  w18            BEQ  R4,R0,no_swap  off=+1  ? w21   if no swap needed skip
+//  w19            STR  R5,[R9,#0]     array[j] = old array[i]
+//  w20            STR  R6,[R8,#0]     array[i] = old array[j]
+//  w21  no_swap:  ADD  R3,R3,#1       j++
+//  w22            B    j_loop         off=-15 (24'hFFFFF1) ? w9
+//  w23  i_next:   ADD  R2,R2,#1       i++
+//  w24            B    i_loop         off=-22 (24'hFFFFEA) ? w4
+//  w25  done:     NOP
+//  w26            B    halt           off=-1  (24'hFFFFFF) ? w27
+//  w27  halt:     NOP
 //
-// Memory model adaptation:
-//   Pipeline uses mem_bram_addr = alu_result[7:0] as a WORD address.
-//   Original ARM uses i*4 for byte addressing; here R7=0 so SLL Rx,Ri,R7
-//   = Ri<<0 = Ri giving word addr = index directly.
-//   Array stored at DMEM word addresses 0..9.
+// Branch offset formula: off = target_word - branch_word - 2
 //
-// Input  array: [323, 123, -455, 2, 98, 125, 10, 65, -56, 0]
-// Sorted array: [-455, -56, 0, 2, 10, 65, 98, 123, 125, 323]
+// INPUT  array: [323, 123, -455, 2, 98, 125, 10, 65, -56, 0]
+// SORTED array: [-455, -56, 0, 2, 10, 65, 98, 123, 125, 323]
 // =============================================================================
 
-module tb_sort;
+module tb_sort_1nop;
 
-  // ---------------------------------------------------------------------------
-  // DUT ports
-  // ---------------------------------------------------------------------------
+  // ??? DUT ports ?????????????????????????????????????????????????????????????
   reg         clk;
   reg         reset;
   reg         run;
@@ -109,9 +71,7 @@ module tb_sort;
   integer pass_count;
   integer fail_count;
 
-  // ---------------------------------------------------------------------------
-  // DUT instantiation
-  // ---------------------------------------------------------------------------
+  // ??? DUT instantiation ?????????????????????????????????????????????????????
   pipeline dut (
     .clk            (clk),
     .reset          (reset),
@@ -132,9 +92,7 @@ module tb_sort;
 
   `define RF dut.u_rf.regFile
 
-  // ---------------------------------------------------------------------------
-  // Clock: 10 ns period
-  // ---------------------------------------------------------------------------
+  // ??? Clock: 10 ns period ???????????????????????????????????????????????????
   localparam CLK_PERIOD = 10;
   initial clk = 1'b0;
   always #(CLK_PERIOD/2) clk = ~clk;
@@ -142,7 +100,7 @@ module tb_sort;
   // ===========================================================================
   // Instruction encoding functions
   // ===========================================================================
-  localparam NOP = 32'hE000_0000;   // AND R0,R0,R0 (writes no visible register)
+  localparam NOP = 32'hE000_0000;   // AND R0,R0,R0
 
   function [31:0] f_mov;            // MOV Rd, #imm8
     input [3:0] Rd; input [7:0] imm8;
@@ -169,12 +127,12 @@ module tb_sort;
     f_slt = {4'hE, 3'b000, 4'b1011, 1'b0, Rn, Rd, 8'h00, Rm};
   endfunction
 
-  function [31:0] f_beq;            // BEQ Rn, Rm, off16  (off = target - beq_word - 2)
+  function [31:0] f_beq;            // BEQ Rn, Rm, off16
     input [3:0] Rn, Rm; input [15:0] off16;
     f_beq = {4'hE, 4'b1000, Rn, Rm, off16};
   endfunction
 
-  function [31:0] f_b;              // B off24  (off = target - b_word - 2)
+  function [31:0] f_b;              // B off24
     input [23:0] off24;
     f_b = {4'hE, 4'b1010, off24};
   endfunction
@@ -190,14 +148,13 @@ module tb_sort;
   endfunction
 
   // ===========================================================================
-  // Tasks
+  // Tasks  (identical discipline to tb_pipeline_p_ext.v)
   // ===========================================================================
-
     integer file_handle_imem;
   integer file_handle_dmem;
   initial begin
-  file_handle_imem = $fopen("imem_arm_mt_1nop.txt", "w");
-  file_handle_dmem = $fopen("dmem_arm_mt_1nop.txt", "w");
+  file_handle_imem = $fopen("imem_mt_1nop.txt", "w");
+  file_handle_dmem = $fopen("dmem_mt_1nop.txt", "w");
   end
   task program_imem_word;
     input [8:0]  waddr;
@@ -218,8 +175,7 @@ module tb_sort;
     input [7:0]  waddr;
     input [63:0] data;
     begin
-	 		$fwrite(file_handle_dmem, "%h;%h\n", waddr, data);
-
+	 	   $fwrite(file_handle_dmem, "%h;%h\n", waddr, data);
       run = 1'b0; step = 1'b0;
       dmem_prog_addr  = waddr;
       dmem_prog_wdata = data;
@@ -279,6 +235,7 @@ module tb_sort;
     end
   endtask
 
+  // ??? check_dmem ????????????????????????????????????????????????????????????
   task check_dmem;
     input [7:0]   waddr;
     input [63:0]  expected;
@@ -291,7 +248,7 @@ module tb_sort;
                  label, waddr, actual, $signed(actual));
         pass_count = pass_count + 1;
       end else begin
-        $display("  FAIL  %-26s  DMEM[%0d]  got=0x%016h (%0d)  exp=0x%016h (%0d)",
+        $display("  FAIL  %-26s  DMEM[%0d]  got=0x%016h(%0d)  exp=0x%016h(%0d)",
                  label, waddr, actual, $signed(actual),
                  expected, $signed(expected));
         fail_count = fail_count + 1;
@@ -299,9 +256,7 @@ module tb_sort;
     end
   endtask
 
-  // ---------------------------------------------------------------------------
-  // WB monitor
-  // ---------------------------------------------------------------------------
+  // ??? WB monitor ????????????????????????????????????????????????????????????
   always @(posedge clk) begin
     if (!reset && dut.wb_wen)
       $display("[%0t] WB  R%0d <- 0x%016h  (pc=%0d)",
@@ -311,8 +266,6 @@ module tb_sort;
   // ===========================================================================
   // MAIN
   // ===========================================================================
-  integer iw;   // IMEM word pointer
-
   initial begin
     pass_count = 0; fail_count = 0;
     reset = 1'b1; run = 1'b0; step = 1'b0; pc_reset_pulse = 1'b0;
@@ -320,11 +273,11 @@ module tb_sort;
     dmem_prog_en   = 1'b0; dmem_prog_we    = 1'b0;
     dmem_prog_addr = 8'h0; dmem_prog_wdata = 64'h0;
 
-    $dumpfile("tb_sort.vcd");
-    $dumpvars(0, tb_sort);
+    $dumpfile("tb_sort_1nop.vcd");
+    $dumpvars(0, tb_sort_1nop);
 
     $display("======================================================");
-    $display("  Bubble Sort Testbench  (1 NOP per hazard/branch)");
+    $display("  Bubble Sort Testbench  (NO NOPs  ?  pipeline_p.v)");
     $display("======================================================");
 
     repeat(3) @(posedge clk); #1;
@@ -332,7 +285,8 @@ module tb_sort;
     @(posedge clk); #1;
 
     // =========================================================================
-    // Step 1 - Load unsorted array into DMEM word addresses 0..9
+    // Step 1 ? Initialise DMEM with the unsorted array (word addresses 0..9)
+    //
     //   Index:   0    1     2   3   4    5   6   7    8  9
     //   Value: 323  123  -455   2  98  125  10  65  -56  0
     // =========================================================================
@@ -347,111 +301,80 @@ module tb_sort;
     program_dmem_word(8'd7, 64'h0000000000000041); //   65
     program_dmem_word(8'd8, 64'hFFFFFFFFFFFFFFC8); //  -56
     program_dmem_word(8'd9, 64'h0000000000000000); //    0
-    $display("  Input: [323, 123, -455, 2, 98, 125, 10, 65, -56, 0]");
+    $display("  Input:  [323, 123, -455, 2, 98, 125, 10, 65, -56, 0]");
 
     // =========================================================================
-    // Step 2 - Program IMEM: 54 words (28 instructions + 26 NOPs)
+    // Step 2 ? Program the sort into IMEM (28 words, no NOPs at all)
     // =========================================================================
-    $display("\n--- Programming IMEM (54 words) ---");
+    $display("\n--- Programming IMEM (28 words, no NOPs) ---");
     do_reset;
-    iw = 0;
 
-    // -- main: w0-7 -----------------------------------------------------------
-    program_imem_word(iw, f_mov(4'd1,  8'd0));         iw=iw+1; // w0  MOV R1,#0
-    program_imem_word(iw, NOP);                         iw=iw+1; // w1  NOP  hazard R1
-    program_imem_word(iw, f_mov(4'd0,  8'd0));         iw=iw+1; // w2  MOV R0,#0
-    program_imem_word(iw, NOP);                         iw=iw+1; // w3  NOP  hazard R0
-    program_imem_word(iw, f_mov(4'd7,  8'd0));         iw=iw+1; // w4  MOV R7,#0
-    program_imem_word(iw, NOP);                         iw=iw+1; // w5  NOP  hazard R7
-    program_imem_word(iw, f_mov(4'd2,  8'd0));         iw=iw+1; // w6  MOV R2,#0  i=0
-    program_imem_word(iw, NOP);                         iw=iw+1; // w7  NOP  hazard R2
+    // ?? main: w0-3 ????????????????????????????????????????????????????????????
+    program_imem_word(9'd0,  f_mov(4'd1,  8'd0));          // w0   MOV R1,#0   base=0
+    program_imem_word(9'd1,  f_mov(4'd0,  8'd0));          // w1   MOV R0,#0   zero
+    program_imem_word(9'd2,  f_mov(4'd7,  8'd0));          // w2   MOV R7,#0   shift=0
+    program_imem_word(9'd3,  f_mov(4'd2,  8'd0));          // w3   MOV R2,#0   i=0
 
-    // -- i_loop: w8-17 --------------------------------------------------------
-    if (iw !== 8) $display("ERROR: i_loop expected at w8, got w%0d", iw);
-    program_imem_word(iw, f_mov(4'd10, 8'd10));        iw=iw+1; // w8  MOV R10,#10
-    program_imem_word(iw, NOP);                         iw=iw+1; // w9  NOP  hazard R10
-    program_imem_word(iw, f_slt(4'd11,4'd2, 4'd10));  iw=iw+1; // w10 SLT R11,R2,R10
-    program_imem_word(iw, NOP);                         iw=iw+1; // w11 NOP  hazard R11
-    // w12: BEQ R11,R0,done  |  done@w50, off = 50-12-2 = +36
-    program_imem_word(iw, f_beq(4'd11,4'd0,16'd36));  iw=iw+1; // w12 BEQ R11,R0,done
-    program_imem_word(iw, NOP);                         iw=iw+1; // w13 NOP  branch delay
-    program_imem_word(iw, f_add_i(4'd3,4'd2, 8'd0));  iw=iw+1; // w14 ADD R3,R2,#0  j=i
-    program_imem_word(iw, NOP);                         iw=iw+1; // w15 NOP  hazard R3
-    program_imem_word(iw, f_add_i(4'd3,4'd3, 8'd1));  iw=iw+1; // w16 ADD R3,R3,#1  j=i+1
-    program_imem_word(iw, NOP);                         iw=iw+1; // w17 NOP  hazard R3
+    // ?? i_loop: w4-8 ??????????????????????????????????????????????????????????
+    program_imem_word(9'd4,  f_mov(4'd10, 8'd10));         // w4   MOV R10,#10
+    program_imem_word(9'd5,  f_slt(4'd11,4'd2, 4'd10));   // w5   SLT R11,R2,R10
+    // w6: BEQ R11,R0,done  off = done@25 - 6 - 2 = +17
+    program_imem_word(9'd6,  f_beq(4'd11,4'd0,16'd17));   // w6   BEQ R11,R0,done
+    program_imem_word(9'd7,  f_add_i(4'd3,4'd2,8'd0));    // w7   ADD R3,R2,#0  (j=i)
+    program_imem_word(9'd8,  f_add_i(4'd3,4'd3,8'd1));    // w8   ADD R3,R3,#1  (j=i+1)
 
-    // -- j_loop: w18-45 -------------------------------------------------------
-    if (iw !== 18) $display("ERROR: j_loop expected at w18, got w%0d", iw);
-    program_imem_word(iw, f_slt(4'd11,4'd3, 4'd10));  iw=iw+1; // w18 SLT R11,R3,R10
-    program_imem_word(iw, NOP);                         iw=iw+1; // w19 NOP  hazard R11
-    // w20: BEQ R11,R0,i_next  |  i_next@w46, off = 46-20-2 = +24
-    program_imem_word(iw, f_beq(4'd11,4'd0,16'd24));  iw=iw+1; // w20 BEQ R11,R0,i_next
-    program_imem_word(iw, NOP);                         iw=iw+1; // w21 NOP  branch delay
-    program_imem_word(iw, f_sll(4'd8, 4'd2, 4'd7));   iw=iw+1; // w22 SLL R8,R2,R7
-    program_imem_word(iw, NOP);                         iw=iw+1; // w23 NOP  hazard R8
-    program_imem_word(iw, f_add_r(4'd8,4'd1, 4'd8));  iw=iw+1; // w24 ADD R8,R1,R8
-    program_imem_word(iw, NOP);                         iw=iw+1; // w25 NOP  hazard R8
-    program_imem_word(iw, f_sll(4'd9, 4'd3, 4'd7));   iw=iw+1; // w26 SLL R9,R3,R7
-    program_imem_word(iw, NOP);                         iw=iw+1; // w27 NOP  hazard R9
-    program_imem_word(iw, f_add_r(4'd9,4'd1, 4'd9));  iw=iw+1; // w28 ADD R9,R1,R9
-    program_imem_word(iw, NOP);                         iw=iw+1; // w29 NOP  hazard R9
-    program_imem_word(iw, f_ldr(4'd5,4'd8, 12'd0));   iw=iw+1; // w30 LDR R5,[R8,#0]
-    program_imem_word(iw, NOP);                         iw=iw+1; // w31 NOP  hazard R5
-    program_imem_word(iw, f_ldr(4'd6,4'd9, 12'd0));   iw=iw+1; // w32 LDR R6,[R9,#0]
-    program_imem_word(iw, NOP);                         iw=iw+1; // w33 NOP  hazard R6
-    program_imem_word(iw, f_slt(4'd4, 4'd6, 4'd5));   iw=iw+1; // w34 SLT R4,R6,R5
-    program_imem_word(iw, NOP);                         iw=iw+1; // w35 NOP  hazard R4
-    // w36: BEQ R4,R0,no_swap  |  no_swap@w42, off = 42-36-2 = +4
-    program_imem_word(iw, f_beq(4'd4, 4'd0, 16'd4));  iw=iw+1; // w36 BEQ R4,R0,no_swap
-    program_imem_word(iw, NOP);                         iw=iw+1; // w37 NOP  branch delay
-    program_imem_word(iw, f_str(4'd5,4'd9, 12'd0));   iw=iw+1; // w38 STR R5,[R9,#0]
-    program_imem_word(iw, NOP);                         iw=iw+1; // w39 NOP  drain before STR
-    program_imem_word(iw, f_str(4'd6,4'd8, 12'd0));   iw=iw+1; // w40 STR R6,[R8,#0]
-    program_imem_word(iw, NOP);                         iw=iw+1; // w41 NOP  drain after STR
+    // ?? j_loop: w9-22 ?????????????????????????????????????????????????????????
+    program_imem_word(9'd9,  f_slt(4'd11,4'd3,4'd10));    // w9   SLT R11,R3,R10
+    // w10: BEQ R11,R0,i_next  off = i_next@23 - 10 - 2 = +11
+    program_imem_word(9'd10, f_beq(4'd11,4'd0,16'd11));   // w10  BEQ R11,R0,i_next
+    program_imem_word(9'd11, f_sll(4'd8,4'd2,4'd7));      // w11  SLL R8,R2,R7
+    program_imem_word(9'd12, f_add_r(4'd8,4'd1,4'd8));    // w12  ADD R8,R1,R8
+    program_imem_word(9'd13, f_sll(4'd9,4'd3,4'd7));      // w13  SLL R9,R3,R7
+    program_imem_word(9'd14, f_add_r(4'd9,4'd1,4'd9));    // w14  ADD R9,R1,R9
+    program_imem_word(9'd15, f_ldr(4'd5,4'd8,12'd0));     // w15  LDR R5,[R8,#0]
+    program_imem_word(9'd16, f_ldr(4'd6,4'd9,12'd0));     // w16  LDR R6,[R9,#0]
+    program_imem_word(9'd17, f_slt(4'd4,4'd6,4'd5));      // w17  SLT R4,R6,R5
+    // w18: BEQ R4,R0,no_swap  off = no_swap@21 - 18 - 2 = +1
+    program_imem_word(9'd18, f_beq(4'd4,4'd0,16'd1));     // w18  BEQ R4,R0,no_swap
+    program_imem_word(9'd19, f_str(4'd5,4'd9,12'd0));     // w19  STR R5,[R9,#0]
+    program_imem_word(9'd20, f_str(4'd6,4'd8,12'd0));     // w20  STR R6,[R8,#0]
 
-    // -- no_swap: w42-45 ------------------------------------------------------
-    if (iw !== 42) $display("ERROR: no_swap expected at w42, got w%0d", iw);
-    program_imem_word(iw, f_add_i(4'd3,4'd3, 8'd1));  iw=iw+1; // w42 ADD R3,R3,#1  j++
-    program_imem_word(iw, NOP);                         iw=iw+1; // w43 NOP  hazard R3
-    // w44: B j_loop  |  j_loop@w18, off = 18-44-2 = -28  (24'hFFFFE4)
-    program_imem_word(iw, f_b(24'hFFFFE4));             iw=iw+1; // w44 B j_loop
-    program_imem_word(iw, NOP);                         iw=iw+1; // w45 NOP  branch delay
+    // ?? no_swap: w21-22 ???????????????????????????????????????????????????????
+    program_imem_word(9'd21, f_add_i(4'd3,4'd3,8'd1));    // w21  ADD R3,R3,#1  (j++)
+    // w22: B j_loop  off = j_loop@9 - 22 - 2 = -15  (24'hFFFFF1)
+    program_imem_word(9'd22, f_b(24'hFFFFF1));             // w22  B j_loop
 
-    // -- i_next: w46-49 -------------------------------------------------------
-    if (iw !== 46) $display("ERROR: i_next expected at w46, got w%0d", iw);
-    program_imem_word(iw, f_add_i(4'd2,4'd2, 8'd1));  iw=iw+1; // w46 ADD R2,R2,#1  i++
-    program_imem_word(iw, NOP);                         iw=iw+1; // w47 NOP  hazard R2
-    // w48: B i_loop  |  i_loop@w8, off = 8-48-2 = -42  (24'hFFFFD6)
-    program_imem_word(iw, f_b(24'hFFFFD6));             iw=iw+1; // w48 B i_loop
-    program_imem_word(iw, NOP);                         iw=iw+1; // w49 NOP  branch delay
+    // ?? i_next: w23-24 ????????????????????????????????????????????????????????
+    program_imem_word(9'd23, f_add_i(4'd2,4'd2,8'd1));    // w23  ADD R2,R2,#1  (i++)
+    // w24: B i_loop  off = i_loop@4 - 24 - 2 = -22  (24'hFFFFEA)
+    program_imem_word(9'd24, f_b(24'hFFFFEA));             // w24  B i_loop
 
-    // -- done / halt: w50-53 --------------------------------------------------
-    if (iw !== 50) $display("ERROR: done expected at w50, got w%0d", iw);
-    program_imem_word(iw, NOP);                         iw=iw+1; // w50 done: NOP
-    // w51: B halt  |  halt@w53, off = 53-51-2 = 0  (24'h000000)
-    program_imem_word(iw, f_b(24'h000000));             iw=iw+1; // w51 B halt
-    program_imem_word(iw, NOP);                         iw=iw+1; // w52 NOP  branch delay
-    if (iw !== 53) $display("ERROR: halt expected at w53, got w%0d", iw);
-    program_imem_word(iw, NOP);                         iw=iw+1; // w53 halt: NOP
-	repeat(458) begin program_imem_word(iw, NOP);                         iw=iw+1; end
-    $display("  IMEM loaded: %0d words", iw);
+    // ?? done / halt: w25-27 ???????????????????????????????????????????????????
+    program_imem_word(9'd25, NOP);                         // w25  done: NOP
+    // w26: B halt  off = halt@27 - 26 - 2 = -1  (24'hFFFFFF)
+    program_imem_word(9'd26, f_b(24'hFFFFFF));             // w26  B halt
+    program_imem_word(9'd27, NOP);                         // w27  halt: NOP
+
+    $display("  IMEM programmed: 28 instructions");
 
     // =========================================================================
-    // Step 3 - Run the sort
+    // Step 3 ? Run the sort
     //
-    // Each j-loop body is 28 words -> 28 cycles + 2-cycle branch penalty.
-    // Total j-iterations: 10+9+...+1 = 55.  55 * 30 ~ 1650 cycles.
-    // i-loop overhead: 10 * 12 ~ 120 cycles.
-    // Run 5000 cycles for a 2.5x safety margin.
+    // Without NOPs the program body is only 28 words but executes ~45×14 ? 630
+    // instruction-cycles for the inner loop comparisons, plus pipeline drain
+    // (5 stages) and branch penalties (2 cycles each × ~110 branches ? 220).
+    // 3000 cycles gives a comfortable margin.
     // =========================================================================
     $display("\n--- Running bubble sort ---");
     pulse_pc_reset();
-    run_cycles(20000);
+    run_cycles(10000);
     $display("  Run complete.");
 
     // =========================================================================
-    // Step 4 - Verify sorted array in DMEM
-    // Expected ascending: [-455, -56, 0, 2, 10, 65, 98, 123, 125, 323]
+    // Step 4 ? Verify sorted array in DMEM
+    //
+    // Expected ascending order:
+    //   [-455, -56, 0, 2, 10, 65, 98, 123, 125, 323]
     // =========================================================================
     $display("\n--- Verifying sorted array ---");
     check_dmem(8'd0, 64'hFFFFFFFFFFFFFE39, "DMEM[0] = -455");
@@ -472,22 +395,19 @@ module tb_sort;
     $display("  Results: %0d PASSED   %0d FAILED", pass_count, fail_count);
     $display("======================================================");
     if (fail_count == 0)
-      $display("  ALL TESTS PASSED - array sorted correctly");
+      $display("  ALL TESTS PASSED ? array sorted correctly");
     else
-      $display("  *** FAILURES - inspect tb_sort.vcd ***");
+      $display("  *** FAILURES ? see tb_sort.vcd ***");
     $display("======================================================\n");
 	  $fclose(file_handle_dmem);
 	  $fclose(file_handle_imem);
     $finish;
-	 
   end
 
-  // ---------------------------------------------------------------------------
-  // Watchdog
-  // ---------------------------------------------------------------------------
+  // ??? Watchdog ??????????????????????????????????????????????????????????????
   initial begin
-    #10_000_000;
-    $display("TIMEOUT - simulation exceeded 10 ms");
+    #5_000_000;
+    $display("TIMEOUT ? simulation exceeded 5 ms");
     $finish;
   end
 
