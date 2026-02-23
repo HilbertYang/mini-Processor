@@ -102,7 +102,8 @@ module pipeline (
 // IF STAGE
 // ===========================================================================
   reg [8:0] pc [3:0];
-  assign pc_dbg = pc[0];
+  //assign pc_dbg = pc[0];
+  assign pc_dbg = imem_addr_mux;
   reg [1:0] if_thread_id;
   reg [1:0] if_pc_id;
 
