@@ -103,11 +103,11 @@ module pipeline (
 // ===========================================================================
   reg [8:0] pc [3:0];
   //assign pc_dbg = pc[0];
-  assign pc_dbg = imem_addr_mux;
   reg [1:0] if_thread_id;
   reg [1:0] if_pc_id;
 
   wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc[if_thread_id];
+  assign pc_dbg = imem_addr_mux;
   wire [31:0] imem_dout;
 
   I_M_32bit_512depth u_imem (
