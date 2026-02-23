@@ -262,6 +262,7 @@ module pipeline (
   reg        dec_is_cond_branch; // 1 = BEQ or BNE
   reg        dec_branch_cond;    // 0 = BEQ, 1 = BNE
   reg        dec_is_bl;          // 1 = BL: write return addr (BL_word+1) to R14
+		reg signed [9:0] full_branch_calc;
 
   always @(*) begin
     // Safe defaults
@@ -282,9 +283,13 @@ module pipeline (
     // off24 is a signed 24-bit word offset.  Cast it to signed so Verilog
     // sign-extends during the 9-bit addition; the result is automatically
     // truncated to 9 bits by the assignment target width.
-    dec_branch_target = ifid_pc + 9'd2 + if_off24[8:0];
-	 //dec_branch_target = ifid_pc + 9'd2 + imem_dout[8:0];
+    //dec_branch_target = ifid_pc + 9'd2 + if_off24[8:0];
 
+		full_branch_calc = $signed({1'b0, ifid_pc}) + 
+                          $signed(10'd2) + 
+                          $signed({{1{if_off24[8]}}, if_beq_off});
+		dec_branch_target = full_branch_calc[8:0];
+		
     // ?? Priority 1: BEQ / BNE ????????????????????????????????????????????????
     if (is_beqbne) begin
       // Use ALU to compute Rn - Rm; branch if zero (BEQ) or nonzero (BNE)
@@ -295,7 +300,12 @@ module pipeline (
       dec_is_cond_branch = 1'b1;
       dec_branch_cond    = (if_beq_type == 4'b1001); // 1=BNE, 0=BEQ
       // Branch target: ifid_pc + 2 + sign_extend(off16), truncated to 9 bits
-      dec_branch_target  = ifid_pc + 9'd2 + if_beq_off[8:0];
+      // dec_branch_target  = ifid_pc + 9'd2 + if_beq_off[8:0];
+		
+		full_branch_calc = $signed({1'b0, ifid_pc}) + 
+                          $signed(10'd2) + 
+                          $signed({{1{if_beq_off[8]}}, if_beq_off});
+		dec_branch_target = full_branch_calc[8:0];
 
     // ?? Priority 2: J (absolute jump) ????????????????????????????????????????
     end else if (is_j) begin
