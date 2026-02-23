@@ -1,0 +1,5 @@
+import os 
+import sys
+
+for i in range(int(sys.argv[1])):
+    os.system("./pipereg.pl dmem_read " + str(i))
