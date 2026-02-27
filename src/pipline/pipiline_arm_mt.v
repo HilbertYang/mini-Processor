@@ -65,12 +65,10 @@ module pipeline (
   input  wire        step,
   input  wire        pc_reset_pulse,
 
-  // I-mem programming interface  ? DO NOT CHANGE
   input  wire        imem_prog_we,
   input  wire [8:0]  imem_prog_addr,
   input  wire [31:0] imem_prog_wdata,
 
-  // D-mem programming interface  ? DO NOT CHANGE
   input  wire        dmem_prog_en,
   input  wire        dmem_prog_we,
   input  wire [7:0]  dmem_prog_addr,
@@ -104,7 +102,7 @@ module pipeline (
   reg [8:0] pc [3:0];
   //assign pc_dbg = pc[0];
   reg [1:0] if_thread_id;
-  reg [1:0] if_pc_id;
+  //reg [1:0] if_pc_id;
 
   wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc[if_thread_id];
   assign pc_dbg = imem_addr_mux;
@@ -128,13 +126,13 @@ module pipeline (
 			pc[3] <= 9'b110000000;
 			if_thread_id <= 2'b00;
 			end
-    else if (ex_branch_taken)         pc[ex_thread_id] <= ex_branch_target;
+    // else if (ex_branch_taken)         pc[ex_thread_id] <= ex_branch_target;
     else if (advance)              
 	 begin  
 		pc[if_thread_id] <= pc[if_thread_id] + 9'd1;
 		if_thread_id <= if_thread_id + 1'b1;
-		
-		if (pc[if_thread_id][6:0] == 7'b1111110) 
+		if (ex_branch_taken)         pc[ex_thread_id] <= ex_branch_target;
+		if (pc[if_thread_id][6:1] == 7'b111111) 
 				begin
 					pc[if_thread_id][6:0] <= 7'd0000000;
 				end
