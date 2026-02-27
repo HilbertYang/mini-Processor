@@ -129,13 +129,11 @@ module pipeline (
     // else if (ex_branch_taken)         pc[ex_thread_id] <= ex_branch_target;
     else if (advance)              
 	 begin  
-		pc[if_thread_id] <= pc[if_thread_id] + 9'd1;
+		//pc[if_thread_id] <= pc[if_thread_id] + 9'd1;
 		if_thread_id <= if_thread_id + 1'b1;
-		if (ex_branch_taken)         pc[ex_thread_id] <= ex_branch_target;
-		if (pc[if_thread_id][6:1] == 7'b111111) 
-				begin
-					pc[if_thread_id][6:0] <= 7'd0000000;
-				end
+		if (ex_branch_taken)   begin      pc[ex_thread_id] <= ex_branch_target; end
+		else if (pc[if_thread_id][6:1] == 6'b111111) begin pc[if_thread_id][6:0] <= 7'd0000000; end
+		else begin  pc[if_thread_id] <= pc[if_thread_id] + 9'd1; end
 	 end
   end
 
