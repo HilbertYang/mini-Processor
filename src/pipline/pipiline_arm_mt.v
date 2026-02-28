@@ -101,10 +101,10 @@ module pipeline (
 // ===========================================================================
   reg [8:0] pc [3:0];
   //assign pc_dbg = pc[0];
-  reg [1:0] if_thread_id;
+  reg [1:0] thread_id;
   //reg [1:0] if_pc_id;
 
-  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc[if_thread_id];
+  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc[thread_id];
   assign pc_dbg = imem_addr_mux;
   wire [31:0] imem_dout;
 
@@ -119,21 +119,27 @@ module pipeline (
   assign if_instr_dbg = imem_dout;
 
   always @(posedge clk) begin
-    if      (reset || pc_reset_pulse) begin 
+    if  (reset || pc_reset_pulse) begin 
 			pc[0] <= 9'b000000000;
 			pc[1] <= 9'b010000000;
 			pc[2] <= 9'b100000000;
 			pc[3] <= 9'b110000000;
-			if_thread_id <= 2'b00;
+			thread_id <= 2'b00;
 			end
     // else if (ex_branch_taken)         pc[ex_thread_id] <= ex_branch_target;
     else if (advance)              
 	 begin  
 		//pc[if_thread_id] <= pc[if_thread_id] + 9'd1;
-		if_thread_id <= if_thread_id + 1'b1;
-		if (ex_branch_taken)   begin      pc[ex_thread_id] <= ex_branch_target; end
-		else if (pc[if_thread_id][6:1] == 6'b111111) begin pc[if_thread_id][6:0] <= 7'd0000000; end
-		else begin  pc[if_thread_id] <= pc[if_thread_id] + 9'd1; end
+		thread_id <= thread_id + 2'b01;
+		
+		if (ex_branch_taken)   begin
+			pc[ex_thread_id] <= ex_branch_target;
+		end
+		if (pc[thread_id][6:1] == 6'b111111) begin 
+			pc[thread_id] <= pc[thread_id]; 
+		end else begin  
+			pc[thread_id] <= pc[thread_id] + 9'd1; 
+		end
 	 end
   end
 
@@ -144,16 +150,16 @@ module pipeline (
   //wire [31:0] ifid_instr;
   reg [8:0]  ifid_pc;
   reg [8:0]  pc_delay;
-  reg [1:0] if_thread_id_delay;
+  reg [1:0] thread_id_delay;
   reg [1:0] ifid_thread_id;
   
   always @(posedge clk) begin
     if (reset || pc_reset_pulse) begin
       pc_delay    <= 9'd0;
-		if_thread_id_delay <= 2'b00;
+		thread_id_delay <= 2'b00;
     end else if (advance) begin
-      pc_delay    <= pc[if_thread_id];
-		if_thread_id_delay <= if_thread_id;
+      pc_delay    <= pc[thread_id];
+		thread_id_delay <= thread_id;
     end
   end
 	 
@@ -170,7 +176,7 @@ module pipeline (
       ifid_instr <= imem_dout;
       //ifid_pc    <= pc;
 		ifid_pc <= pc_delay;
-		ifid_thread_id <= if_thread_id_delay;
+		ifid_thread_id <= thread_id_delay;
     end
   end
   
@@ -457,7 +463,7 @@ REG_FILE_BANK #(.data_width(64), .addr_width(4), .th_id_width(2)) u_rf (
   reg [1:0] idex_thread_id;
 
   always @(posedge clk) begin
-    if (reset || pc_reset_pulse || ex_branch_taken) begin
+    if (reset || pc_reset_pulse ) begin
       idex_alu_ctrl       <= ALU_NOP;
       idex_use_imm        <= 1'b0;
       idex_imm64          <= 64'b0;
