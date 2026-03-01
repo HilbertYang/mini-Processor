@@ -671,7 +671,7 @@ REG_FILE_BANK #(.data_width(64), .addr_width(4), .th_id_width(2)) u_rf (
 // ===========================================================================
 // WB STAGE  ?  Write back to register file
 // ===========================================================================
-  assign wb_wen   = (~reset) & (~pc_reset_pulse) & advance & memwb_wreg_en;
+  assign wb_wen   = (~reset) & (~pc_reset_pulse) & memwb_wreg_en;
   assign wb_waddr = memwb_wreg;
   assign wb_wdata = memwb_is_load ? memwb_dmem_rdata : memwb_alu_result;
   assign wb_thread_id = memwb_thread_id;
