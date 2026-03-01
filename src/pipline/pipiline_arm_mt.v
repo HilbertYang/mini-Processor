@@ -99,12 +99,26 @@ module pipeline (
 // ===========================================================================
 // IF STAGE
 // ===========================================================================
-  reg [8:0] pc [3:0];
+  //reg [8:0] pc [3:0];
   //assign pc_dbg = pc[0];
-  reg [1:0] thread_id;
-  //reg [1:0] if_pc_id;
-
-  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc[thread_id];
+  //reg [1:0] thread_id;
+	wire [8:0] pc;
+	wire [1:0] thread_id;
+  // wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc[thread_id];
+   pc_target pc_t( 
+		.advance(advance),
+		.pc_reset_pulse(pc_reset_pulse),
+		.clk(clk),
+		.reset (reset),
+		.ex_branch_taken(ex_branch_taken),
+		.ex_branch_target(ex_branch_target),
+		.ex_thread_id(ex_thread_id),
+		.pc_target(pc),
+		.thread_id(thread_id)
+    );
+	 
+  //wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc[thread_id];
+  wire [8:0]  imem_addr_mux = imem_prog_we ? imem_prog_addr : pc;
   assign pc_dbg = imem_addr_mux;
   wire [31:0] imem_dout;
 
@@ -117,7 +131,8 @@ module pipeline (
     .we   (imem_prog_we)
   );
   assign if_instr_dbg = imem_dout;
-
+  
+/*
   always @(posedge clk) begin
     if  (reset || pc_reset_pulse) begin 
 			pc[0] <= 9'b000000000;
@@ -142,7 +157,7 @@ module pipeline (
 		end
 	 end
   end
-
+*/
 // ===========================================================================
 // IF/ID PIPELINE REGISTER
 // ===========================================================================
@@ -158,7 +173,8 @@ module pipeline (
       pc_delay    <= 9'd0;
 		thread_id_delay <= 2'b00;
     end else if (advance) begin
-      pc_delay    <= pc[thread_id];
+      //pc_delay    <= pc[thread_id];
+		pc_delay    <= pc;
 		thread_id_delay <= thread_id;
     end
   end
@@ -523,7 +539,8 @@ REG_FILE_BANK #(.data_width(64), .addr_width(4), .th_id_width(2)) u_rf (
   );
 
   // Zero flag for conditional branches
-  wire ex_zero = (ex_alu_out == 64'h0);
+  // wire ex_zero = (ex_alu_out == 64'h0);
+  wire ex_zero = (ex_alu_A == ex_alu_B);
 
   // Conditional branch decision
   // BEQ: take if Rn==Rm  ?  (Rn-Rm)==0  ?  ex_zero=1
@@ -534,8 +551,7 @@ REG_FILE_BANK #(.data_width(64), .addr_width(4), .th_id_width(2)) u_rf (
   // Unconditional branch: is_branch=1 and is NOT a conditional branch
   wire ex_uncond_taken = idex_is_branch & ~idex_is_cond_branch;
 
-  assign ex_branch_taken  = (ex_uncond_taken | ex_cond_taken | idex_is_jump)
-                            & advance;
+  assign ex_branch_taken  = (ex_uncond_taken | ex_cond_taken | idex_is_jump);
   assign ex_branch_target = idex_is_jump
                             ? idex_r2data[8:0]   // BX / JR: target from register
                             : idex_branch_target; // B / J / BEQ / BNE
