@@ -1,4 +1,4 @@
-# Custom ARM-32 ISA (EE533 Project)
+# Mutli thread processor
 
 ## Overview
 This project implements a custom 5-stage pipelined ARM-32–like processor with extensions for GPU interaction and FIFO-based streaming. The pipeline stages are:
