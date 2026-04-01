@@ -147,15 +147,3 @@ STR R3, [R0, #0]
 
 ---
 
-## Future Extensions
-
-- Hazard detection
-- Forwarding
-- Cache support
-- SIMD/GPU enhancements
-
----
-
-## Author
-EE533 Project – Custom CPU + GPU Edge Architecture
-
